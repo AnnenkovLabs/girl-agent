@@ -32,7 +32,7 @@ class OpenAILike implements LLMClient {
     });
   }
   async chat(messages: ChatMessage[], opts: LLMOptions = {}): Promise<string> {
-    const res = await this.client.chat.completions.create({
+    const payload = {
       model: this.cfg.model,
       messages: messages.map(m => ({
         role: m.role,
@@ -45,9 +45,56 @@ class OpenAILike implements LLMClient {
       temperature: opts.temperature ?? 0.85,
       max_tokens: opts.maxTokens ?? 600,
       response_format: opts.json ? { type: "json_object" } : undefined
-    });
+    };
+
+    // Некоторые OpenAI-compatible прокси (в т.ч. OmniRoute) могут вернуть event-stream
+    // даже для обычного chat.completions без stream=true. Сначала пробуем прямой fetch,
+    // умеющий разобрать и JSON, и SSE. Если baseURL не задан/сломан — откатываемся к SDK.
+    if (this.cfg.baseURL) {
+      const url = this.cfg.baseURL.replace(/\/$/, "") + "/chat/completions";
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "authorization": `Bearer ${this.cfg.apiKey}`,
+          "accept": "application/json, text/event-stream"
+        },
+        body: JSON.stringify(payload)
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`${res.status} ${text.slice(0, 300)}`);
+      const ctype = res.headers.get("content-type") || "";
+      if (ctype.includes("text/event-stream") || text.trimStart().startsWith("data:")) {
+        return parseOpenAIEventStream(text).trim();
+      }
+      const json = JSON.parse(text);
+      return json?.choices?.[0]?.message?.content?.trim?.() ?? "";
+    }
+
+    const res = await this.client.chat.completions.create(payload as any);
     return res.choices[0]?.message?.content?.trim() ?? "";
   }
+}
+
+function parseOpenAIEventStream(raw: string): string {
+  const parts: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const data = trimmed.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      const json = JSON.parse(data);
+      const choice = json?.choices?.[0];
+      const delta = choice?.delta?.content;
+      const full = choice?.message?.content;
+      if (typeof delta === "string") parts.push(delta);
+      else if (typeof full === "string") parts.push(full);
+    } catch {
+      // ignore malformed chunks
+    }
+  }
+  return parts.join("");
 }
 
 class AnthropicLike implements LLMClient {

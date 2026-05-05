@@ -107,7 +107,72 @@ export class Runtime extends EventEmitter {
   pause() { this.paused = true; }
   resume() { this.paused = false; }
 
-  private histKey(chatId: number | string) { return String(chatId); }
+  private histKey(chatId: number | string, threadId?: number) { return threadId ? `${String(chatId)}:${threadId}` : String(chatId); }
+
+  private groupConfig() {
+    return {
+      enabled: false,
+      replyMode: "owner-or-mentions" as const,
+      triggers: [this.cfg.name],
+      allowedUserIds: [] as number[],
+      ownerAlwaysAllowed: true,
+      ...this.cfg.group
+    };
+  }
+
+  private isAllowedGroupChat(chatId: number | string): boolean {
+    const cfg = this.groupConfig();
+    const allowed = cfg.allowedChatIds ?? [];
+    if (!allowed.length) return false;
+    const value = String(chatId);
+    return allowed.some((item) => String(item) === value);
+  }
+
+  private isGroupAddressed(m: IncomingMessage): boolean {
+    if (m.mentioned || m.replyToSelf) return true;
+    const triggers = (this.groupConfig().triggers ?? [])
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+    if (!triggers.length) return false;
+    const lower = (m.text ?? "").toLowerCase();
+    return triggers.some((trigger) => lower.includes(trigger));
+  }
+
+  private isAllowedGroupUser(fromId: number): boolean {
+    const cfg = this.groupConfig();
+    if (cfg.ownerAlwaysAllowed !== false && this.cfg.ownerId && fromId === this.cfg.ownerId) return true;
+    const allowed = cfg.allowedUserIds ?? [];
+    if (!allowed.length) return true;
+    return allowed.includes(fromId);
+  }
+
+  private shouldHandleGroupMessage(m: IncomingMessage): { ok: boolean; reason?: string } {
+    const cfg = this.groupConfig();
+    if (!cfg.enabled) return { ok: false, reason: "group-disabled" };
+    if (!this.isAllowedGroupChat(m.chatId)) return { ok: false, reason: "group-not-allowed" };
+    if (!this.isAllowedGroupUser(m.fromId)) return { ok: false, reason: "group-user-not-allowed" };
+    if (cfg.replyMode === "all") return { ok: true };
+    const addressed = this.isGroupAddressed(m);
+    if (cfg.replyMode === "mentions") return addressed ? { ok: true } : { ok: false, reason: "group-not-addressed" };
+    if (this.cfg.ownerId && m.fromId === this.cfg.ownerId) return { ok: true };
+    return addressed ? { ok: true } : { ok: false, reason: "group-not-addressed" };
+  }
+
+  private safeName(name?: string): string {
+    return (name ?? "")
+      .replace(/[\r\n|()]/g, " ")
+      .trim()
+      .slice(0, 80);
+  }
+
+  private logIncomingLine(m: IncomingMessage, incomingText: string): string {
+    const sender = this.safeName(m.fromName);
+    return `[${new Date().toISOString()}] chat(${this.histKey(m.chatId, m.threadId)}) user(${m.fromId}${sender ? `|${sender}` : ""}): ${incomingText}`;
+  }
+
+  private logOutgoingLine(chatId: number | string, text: string, proactive = false, threadId?: number): string {
+    return `  -> chat(${this.histKey(chatId, threadId)}) ${proactive ? "[proactive] " : ""}она: ${text}`;
+  }
 
   private scheduleReply(
     key: string,
@@ -131,7 +196,7 @@ export class Runtime extends EventEmitter {
       const latestIncoming = this.pendingReplyIncoming.get(key) ?? incoming;
       this.pendingReplyIncoming.delete(key);
       const latestHist = this.histories.get(key) ?? hist;
-      this.generateAndSend(chatId, latestHist, tick, scope, romanticApproach, latestIncoming, presenceHint).catch(e =>
+      this.generateAndSend(chatId, latestHist, tick, scope, romanticApproach, latestIncoming, presenceHint, latestIncoming.threadId).catch(e =>
         this.emit("event", { type: "error", text: silentErrorLabel(e) } as RuntimeEvent)
       );
     }, delaySec * 1000);
@@ -175,10 +240,10 @@ export class Runtime extends EventEmitter {
     this.emit("event", { type: "info", text: `primary owner сменён после dumped: ${oldOwnerId} → ${fromId}` } as RuntimeEvent);
   }
 
-  private async historyFor(key: string, fromId?: number, restore = false): Promise<ConversationTurn[]> {
+  private async historyFor(key: string, chatKey: number | string, fromId?: number, restore = false): Promise<ConversationTurn[]> {
     const existing = this.histories.get(key);
     if (existing) return existing;
-    const restored = restore ? await readRecentSessionTurns(this.cfg.slug, this.cfg.tz, fromId, 30) : [];
+    const restored = restore ? await readRecentSessionTurns(this.cfg.slug, this.cfg.tz, chatKey, fromId, 30) : [];
     const hist = restored.map(t => ({ role: t.role, content: t.content, ts: t.ts }));
     this.histories.set(key, hist);
     this.hydratePresenceTrackers(key, hist);
@@ -227,8 +292,11 @@ export class Runtime extends EventEmitter {
 
   private mediaAwareText(m: IncomingMessage): string {
     const media = describeIncomingMedia(m.media);
-    if (!media) return m.text;
-    return m.text ? `${media}\n${m.text}` : media;
+    const base = !media ? m.text : (m.text ? `${media}\n${m.text}` : media);
+    if (m.isPrivate) return base;
+    const sender = this.safeName(m.fromName) || String(m.fromId);
+    const title = this.safeName(m.chatTitle);
+    return `[group:${title || m.chatId} sender:${sender}#${m.fromId}${m.replyToSelf ? " reply-to-you" : ""}${m.mentioned ? " mentioned-you" : ""}]\n${base}`;
   }
 
   private requestedOutgoingMedia(text: string): "photo" | "video" | "voice" | "video_note" | undefined {
@@ -239,7 +307,7 @@ export class Runtime extends EventEmitter {
     return undefined;
   }
 
-  private async sendBubbles(chatId: number | string, bubbles: string[], hist: ConversationTurn[], scope: RelationshipScope, typing = true): Promise<string[]> {
+  private async sendBubbles(chatId: number | string, bubbles: string[], hist: ConversationTurn[], scope: RelationshipScope, typing = true, threadId?: number): Promise<string[]> {
     const sent: string[] = [];
     if (this.userbotActionAvailable("readHistory")) {
       await this.tg.readHistory?.(chatId).catch(() => {});
@@ -258,25 +326,25 @@ export class Runtime extends EventEmitter {
         await sleep(typingMs + pauseMs);
       }
       if (typing) await this.tg.setTyping(chatId, true).catch(() => {});
-      const messageId = await this.tg.sendText(chatId, text);
+      const messageId = await this.tg.sendText(chatId, text, threadId);
       const now = Date.now();
       if (messageId) {
-        this.lastSentByChat.set(this.histKey(chatId), messageId);
-        this.sentMessages.push({ key: this.histKey(chatId), chatId, messageId, ts: now });
+        this.lastSentByChat.set(this.histKey(chatId, threadId), messageId);
+        this.sentMessages.push({ key: this.histKey(chatId, threadId), chatId, messageId, ts: now });
       }
       hist.push({ role: "assistant", content: text, ts: now });
-      this.lastHerReplyTs.set(this.histKey(chatId), Date.now());
+      this.lastHerReplyTs.set(this.histKey(chatId, threadId), Date.now());
       this.emit("event", { type: "outgoing", text, chatId } as RuntimeEvent);
-      if (scope === "primary") await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> она: ${text}`);
+      await appendSessionLog(this.cfg.slug, this.cfg.tz, this.logOutgoingLine(chatId, text, false, threadId));
       sent.push(text);
     }
     return sent;
   }
 
-  private async sendSafeFallback(chatId: number | string, hist: ConversationTurn[], scope: RelationshipScope): Promise<void> {
+  private async sendSafeFallback(chatId: number | string, hist: ConversationTurn[], scope: RelationshipScope, threadId?: number): Promise<void> {
     if (this.userbotActionAvailable("readHistory")) await this.tg.readHistory?.(chatId).catch(() => {});
     this.emit("event", { type: "ignored", text: hist[hist.length - 1]?.content ?? "", reason: "silent-fallback" } as RuntimeEvent);
-    if (scope === "primary") await appendSessionLog(this.cfg.slug, this.cfg.tz, "  -> ignored (silent-fallback)");
+    await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> chat(${this.histKey(chatId, threadId)}) ignored (silent-fallback)`);
   }
 
   private async generateJailbreakReaction(incomingText: string, scope: RelationshipScope): Promise<string[]> {
@@ -364,26 +432,29 @@ export class Runtime extends EventEmitter {
   private async handleIncoming(m: IncomingMessage): Promise<void> {
     try {
       if (this.paused) return;
-      if (!m.isPrivate) return; // персонаж работает только в личных чатах — и для bot, и для userbot
-      await this.switchPrimaryAfterDumped(m.fromId);
-      await this.ensureOwner(m.fromId);
+      if (!m.isPrivate) {
+        const gate = this.shouldHandleGroupMessage(m);
+        if (!gate.ok) return;
+      }
+      if (m.isPrivate) {
+        await this.switchPrimaryAfterDumped(m.fromId);
+        await this.ensureOwner(m.fromId);
+      }
       const isPrimary = this.isPrimaryFrom(m.fromId);
       if (isPrimary && this.cfg.stage === "dumped") {
         this.emit("event", { type: "ignored", text: m.text, reason: "dumped" } as RuntimeEvent);
         return;
       }
-      const key = this.histKey(m.chatId);
+      const key = this.histKey(m.chatId, m.threadId);
       const seq = (this.incomingSeq.get(key) ?? 0) + 1;
       this.incomingSeq.set(key, seq);
       this.pendingReplyIncoming.set(key, m);
-      const hist = await this.historyFor(key, m.fromId, isPrimary);
+      const hist = await this.historyFor(key, m.chatId, m.isPrivate && isPrimary ? m.fromId : undefined, true);
       const incomingText = this.mediaAwareText(m);
       hist.push({ role: "user", content: incomingText, ts: Date.now() });
       this.histories.set(key, hist);
       this.emit("event", { type: "incoming", text: incomingText, chatId: m.chatId } as RuntimeEvent);
-      if (isPrimary) {
-        await appendSessionLog(this.cfg.slug, this.cfg.tz, `[${new Date().toISOString()}] он(${m.fromId}): ${incomingText}`);
-      }
+      await appendSessionLog(this.cfg.slug, this.cfg.tz, this.logIncomingLine(m, incomingText));
 
     if (m.media?.kind === "sticker" && m.media.fileId && isPrimary) {
       addStickerToLibrary(this.cfg, m.media.fileId, m.media.emoji ?? "", ["received"]).catch(() => {});
@@ -398,7 +469,7 @@ export class Runtime extends EventEmitter {
       } catch (e) {
         this.emit("event", { type: "error", text: silentErrorLabel(e) } as RuntimeEvent);
       }
-      if (bubbles.length) await this.sendBubbles(m.chatId, bubbles, hist, scope, true);
+      if (bubbles.length) await this.sendBubbles(m.chatId, bubbles, hist, scope, true, m.threadId);
       return;
     }
 
@@ -410,7 +481,7 @@ export class Runtime extends EventEmitter {
         this.emit("event", { type: "error", text: silentErrorLabel(e) } as RuntimeEvent);
       }
       if (!bubbles.length) return;
-      await this.sendBubbles(m.chatId, bubbles, hist, isPrimary ? "primary" : "acquaintance", true);
+      await this.sendBubbles(m.chatId, bubbles, hist, isPrimary ? "primary" : "acquaintance", true, m.threadId);
       if (isPrimary) recordInteractionMemory(this.llm, this.cfg, incomingText, bubbles.join(" / ")).catch(() => {});
       return;
     }
@@ -421,14 +492,14 @@ export class Runtime extends EventEmitter {
 
     if (!isPrimary) {
       const romanticApproach = this.isRomanticApproach(incomingText);
-      if (await this.maybeBlockAfterBoundary(m.chatId, incomingText, romanticApproach)) return;
+      if (m.isPrivate && await this.maybeBlockAfterBoundary(m.chatId, incomingText, romanticApproach)) return;
       const tick = this.acquaintanceTick(romanticApproach);
       this.scheduleReply(key, m.chatId, hist, tick, "acquaintance", romanticApproach, m, undefined, tick.delaySec);
       return;
     }
 
     // Если недавно она написала проактивно в этот чат — обрабатываем как ответ на ping
-    const pp = this.pendingProactive.get(this.histKey(m.chatId));
+    const pp = this.pendingProactive.get(this.histKey(m.chatId, m.threadId));
     if (pp && Date.now() - pp.sentAt < 30 * 60 * 1000) {
       const agenda = await readAgenda(this.cfg.slug);
       const item = agenda.find(a => a.id === pp.itemId);
@@ -445,7 +516,7 @@ export class Runtime extends EventEmitter {
           agenda[idx]!.history = [...(agenda[idx]!.history ?? []), `user response → ${decision.decision}: ${decision.note}`];
           await writeAgenda(this.cfg.slug, agenda);
         }
-        this.pendingProactive.delete(this.histKey(m.chatId));
+        this.pendingProactive.delete(this.histKey(m.chatId, m.threadId));
         this.emit("event", { type: "info", text: `agenda[${pp.itemId}]: ${decision.decision} (${decision.note})` } as RuntimeEvent);
       }
     }
@@ -478,9 +549,21 @@ export class Runtime extends EventEmitter {
     const activeDialog = this.lastHerReplyTs.get(key)
       ? Date.now() - (this.lastHerReplyTs.get(key) ?? 0) < 5 * 60 * 1000
       : false;
-    const tick = await behaviorTick(this.llm, this.cfg, hist, incomingText, {
-      presence, conflict, conflictColdActive: coldActive, blockHint, activeDialog
-    });
+    const forcedGroupReply = !m.isPrivate && isPrimary && (m.mentioned || m.replyToSelf);
+    const tick = forcedGroupReply
+      ? {
+          shouldReply: true,
+          shouldRead: true,
+          delaySec: 0,
+          bubbles: 1,
+          typing: true,
+          ignoreReason: "",
+          moodDelta: {},
+          intent: "reply" as const
+        }
+      : await behaviorTick(this.llm, this.cfg, hist, incomingText, {
+          presence, conflict, conflictColdActive: coldActive, blockHint, activeDialog
+        });
     if (this.incomingSeq.get(key) !== seq) return;
 
     // apply mood delta immediately
@@ -531,7 +614,7 @@ export class Runtime extends EventEmitter {
         }
         await this.tg.setReaction(m.chatId, m.messageId, tick.reaction!).catch(() => {});
         this.emit("event", { type: "info", text: `реакция ${tick.reaction} на "${incomingText.slice(0, 40)}"` } as RuntimeEvent);
-        appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> reaction ${tick.reaction}`).catch(() => {});
+        appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> chat(${this.histKey(m.chatId, m.threadId)}) reaction ${tick.reaction}`).catch(() => {});
       }, reactDelay);
     }
 
@@ -540,7 +623,7 @@ export class Runtime extends EventEmitter {
         await this.tg.readHistory?.(m.chatId).catch(() => {});
       }
       this.emit("event", { type: "ignored", text: incomingText, reason: tick.ignoreReason ?? tick.intent } as RuntimeEvent);
-      await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> ignored (${tick.intent}: ${tick.ignoreReason ?? ""})`);
+      await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> chat(${this.histKey(m.chatId, m.threadId)}) ignored (${tick.intent}: ${tick.ignoreReason ?? ""})`);
       return;
     }
 
@@ -564,7 +647,8 @@ export class Runtime extends EventEmitter {
     scope: RelationshipScope,
     romanticApproach = false,
     incoming?: IncomingMessage,
-    presenceHint?: string
+    presenceHint?: string,
+    threadId?: number
   ): Promise<void> {
     if (this.paused) return;
     // Интегрируем daily-life, conflict, recall в system-промпт
@@ -604,11 +688,11 @@ export class Runtime extends EventEmitter {
       reply = sanitizeModelReply(await this.llm.chat(messages, { temperature: 0.95, maxTokens: 3500 }));
     } catch (e) {
       this.emit("event", { type: "error", text: silentErrorLabel(e) } as RuntimeEvent);
-      await this.sendSafeFallback(chatId, hist, scope);
+      await this.sendSafeFallback(chatId, hist, scope, threadId);
       return;
     }
     if (!reply) {
-      await this.sendSafeFallback(chatId, hist, scope);
+      await this.sendSafeFallback(chatId, hist, scope, threadId);
       return;
     }
 
@@ -619,7 +703,7 @@ export class Runtime extends EventEmitter {
     }
 
     const bubbles = cleanedReply.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean).slice(0, Math.max(tick.bubbles || 1, 1));
-    const sent = await this.sendBubbles(chatId, bubbles, hist, scope, tick.typing);
+    const sent = await this.sendBubbles(chatId, bubbles, hist, scope, tick.typing, threadId);
     if (scope === "primary") {
       recordInteractionMemory(this.llm, this.cfg, lastUser ?? "", sent.join(" / ")).catch(() => {});
     }
@@ -642,7 +726,7 @@ export class Runtime extends EventEmitter {
     if (this.cfg.stage === "dumped") return;
     if (this.cfg.ownerId) {
       const key = this.histKey(this.cfg.ownerId);
-      const hist = await this.historyFor(key, this.cfg.ownerId, true);
+      const hist = await this.historyFor(key, this.cfg.ownerId, this.cfg.ownerId, true);
       const conflict = await readConflict(this.cfg.slug);
       const planned = await ensureAutonomousAgenda(this.llm, this.cfg, this.dailyLife, this.cfg.ownerId, hist, conflict);
       if (planned.created) {
@@ -655,7 +739,7 @@ export class Runtime extends EventEmitter {
     const item = due[0]!;
     // Если в этом чате недавно (10мин) уже была какая-то активность — не лезем сейчас
     const key = this.histKey(item.chatId);
-    const hist = await this.historyFor(key, this.cfg.ownerId, true);
+    const hist = await this.historyFor(key, item.chatId, this.cfg.ownerId, true);
     const conflict = await readConflict(this.cfg.slug);
     const presence = computePresenceState(
       this.cfg,
@@ -697,7 +781,7 @@ export class Runtime extends EventEmitter {
         }
         hist.push({ role: "assistant", content: piece, ts: now });
         this.emit("event", { type: "outgoing", text: piece, chatId: item.chatId } as RuntimeEvent);
-        await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> [proactive] она: ${piece}`);
+        await appendSessionLog(this.cfg.slug, this.cfg.tz, this.logOutgoingLine(item.chatId, piece, true));
       }
       this.histories.set(key, hist);
       await markAgendaFired(this.cfg.slug, item.id);

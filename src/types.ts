@@ -114,6 +114,24 @@ export interface ProfileConfig {
   communication?: CommunicationProfile;
   personaNotes?: string;
   busySchedule?: BusySlot[];
+  group?: {
+    /** Allow operation in Telegram groups/supergroups/channels. Default: false */
+    enabled?: boolean;
+    /** Optional allowlist of chat ids where group mode is allowed */
+    allowedChatIds?: Array<number | string>;
+    /** Optional allowlist of Telegram user ids allowed to talk to her in groups */
+    allowedUserIds?: number[];
+    /**
+     * all = process every group message
+     * mentions = only when directly addressed
+     * owner-or-mentions = owner always, others only when directly addressed
+     */
+    replyMode?: "all" | "mentions" | "owner-or-mentions";
+    /** Additional plain-text triggers like the persona name */
+    triggers?: string[];
+    /** When true, ownerId bypasses allowedUserIds in groups */
+    ownerAlwaysAllowed?: boolean;
+  };
 }
 
 export interface RelationshipScore {

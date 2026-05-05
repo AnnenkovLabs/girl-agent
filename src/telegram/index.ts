@@ -4,9 +4,14 @@ export interface IncomingMessage {
   text: string;
   fromId: number;
   chatId: number | string;
+  threadId?: number;
   messageId: number;
   isPrivate: boolean;
+  chatType?: "private" | "group" | "supergroup" | "channel" | "unknown";
   fromName?: string;
+  mentioned?: boolean;
+  replyToSelf?: boolean;
+  chatTitle?: string;
   media?: IncomingMedia;
 }
 
@@ -23,7 +28,7 @@ export interface IncomingMedia {
 
 export interface TgAdapter {
   start(onMessage: (m: IncomingMessage) => Promise<void>): Promise<void>;
-  sendText(chatId: number | string, text: string): Promise<number | undefined>;
+  sendText(chatId: number | string, text: string, threadId?: number): Promise<number | undefined>;
   setTyping(chatId: number | string, on: boolean): Promise<void>;
   /** Реакция на сообщение. Эмодзи 1 символ. Тихий no-op если не поддерживается. */
   setReaction(chatId: number | string, messageId: number, emoji: string): Promise<void>;

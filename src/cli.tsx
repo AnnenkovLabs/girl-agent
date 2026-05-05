@@ -217,6 +217,17 @@ function personaNotesForGeneration(cfg: ProfileConfig): string {
 async function runRuntime(cfg: ProfileConfig) {
   const rt = new Runtime(cfg);
   await rt.start();
+  if (!process.stdin.isTTY || process.env.NO_TUI === "1") {
+    process.stdout.write(`runtime started for profile: ${cfg.slug}\n`);
+    const shutdown = async () => {
+      await rt.stop();
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    await new Promise<void>(() => {});
+    return;
+  }
   const inst = render(<Dashboard runtime={rt} />, { exitOnCtrlC: true });
   process.on("SIGINT", async () => { await rt.stop(); inst.unmount(); process.exit(0); });
   await inst.waitUntilExit();

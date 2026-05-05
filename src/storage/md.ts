@@ -46,6 +46,13 @@ export async function readConfig(slug: string): Promise<ProfileConfig | null> {
       sleepTo: 8,
       nightWakeChance: 0.05,
       busySchedule: [],
+      group: {
+        enabled: false,
+        replyMode: "owner-or-mentions",
+        triggers: [],
+        allowedUserIds: [],
+        ownerAlwaysAllowed: true
+      },
       ...parsed,
       communication
     } as ProfileConfig;
@@ -99,6 +106,11 @@ export interface StoredConversationTurn {
   role: "user" | "assistant";
   content: string;
   ts?: number;
+}
+
+function normalizeChatKey(chatKey?: string | number): string | undefined {
+  if (chatKey == null) return undefined;
+  return String(chatKey);
 }
 
 const SCORE_RE = /<!--score:(.+?)-->/;
@@ -231,15 +243,33 @@ export async function readSessionLog(slug: string, day: string): Promise<string>
   return readMd(slug, `log/${day}.md`);
 }
 
-export function parseSessionLogTurns(raw: string, fromId?: number, limit = 30): StoredConversationTurn[] {
+export function parseSessionLogTurns(raw: string, chatKey?: string | number, fromId?: number, limit = 30): StoredConversationTurn[] {
   const turns: StoredConversationTurn[] = [];
+  const targetChatKey = normalizeChatKey(chatKey);
   let currentChatMatches = fromId == null;
   for (const line of raw.split(/\r?\n/)) {
+    const userV2 = line.match(/^\[(.+?)\]\s+chat\((.+?)\)\s+user\((\d+)(?:\|.*)?\):\s*(.*)$/);
+    if (userV2) {
+      const lineChatKey = normalizeChatKey(userV2[2]);
+      currentChatMatches = (targetChatKey == null || lineChatKey === targetChatKey) && (fromId == null || Number(userV2[3]) === fromId);
+      if (currentChatMatches) {
+        turns.push({ role: "user", content: userV2[4] ?? "", ts: Date.parse(userV2[1] ?? "") || undefined });
+      }
+      continue;
+    }
     const user = line.match(/^\[(.+?)\]\s+он\((\d+)\):\s*(.*)$/);
     if (user) {
       currentChatMatches = fromId == null || Number(user[2]) === fromId;
       if (currentChatMatches) {
         turns.push({ role: "user", content: user[3] ?? "", ts: Date.parse(user[1] ?? "") || undefined });
+      }
+      continue;
+    }
+    const assistantV2 = line.match(/^\s*->\s+chat\((.+?)\)\s+(?:\[proactive\]\s+)?она:\s*(.*)$/);
+    if (assistantV2) {
+      const lineChatKey = normalizeChatKey(assistantV2[1]);
+      if ((targetChatKey == null || lineChatKey === targetChatKey) && currentChatMatches) {
+        turns.push({ role: "assistant", content: assistantV2[2] ?? "" });
       }
       continue;
     }
@@ -251,10 +281,10 @@ export function parseSessionLogTurns(raw: string, fromId?: number, limit = 30): 
   return turns.slice(-limit);
 }
 
-export async function readRecentSessionTurns(slug: string, tz: string, fromId?: number, limit = 30): Promise<StoredConversationTurn[]> {
+export async function readRecentSessionTurns(slug: string, tz: string, chatKey?: string | number, fromId?: number, limit = 30): Promise<StoredConversationTurn[]> {
   const day = sessionDate(tz);
   const raw = await readSessionLog(slug, day);
-  return parseSessionLogTurns(raw, fromId, limit);
+  return parseSessionLogTurns(raw, chatKey, fromId, limit);
 }
 
 // ===== Agenda (proactive scheduler) =====
@@ -286,4 +316,3 @@ export async function writeAgenda(slug: string, items: AgendaItem[]): Promise<vo
   await ensureProfile(slug);
   await fs.writeFile(path.join(profileDir(slug), "agenda.json"), JSON.stringify(items, null, 2), "utf8");
 }
-

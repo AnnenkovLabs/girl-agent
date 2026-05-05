@@ -1,0 +1,12 @@
+services:
+  girl-agent:
+    build:
+      context: ../..
+      dockerfile: deploy/synology/Dockerfile
+    container_name: girl-agent
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+    volumes:
+      - ../../data:/app/data
+    command: ["node", "dist/cli.js", "--profile=girl"]

@@ -1,7 +1,7 @@
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import type { ProfileConfig } from "../types.js";
-import type { IncomingMedia, TgAdapter } from "./index.js";
+import type { IncomingMedia, IncomingMessage, TgAdapter } from "./index.js";
 import { NewMessage } from "telegram/events/index.js";
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -31,6 +31,24 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
   client.onError = async () => { /* swallow _updateLoop ping TIMEOUT noise */ };
   let me: Api.User | null = null;
   const peerCache = new Map<string | number, Api.TypeInputPeer>();
+
+  function selfUsernames(): string[] {
+    const out = new Set<string>();
+    const push = (value: unknown) => {
+      if (typeof value === "string" && value.trim()) out.add(value.trim().toLowerCase());
+    };
+    push((me as any)?.username);
+    const usernames = (me as any)?.usernames;
+    if (Array.isArray(usernames)) {
+      for (const item of usernames) push(item?.username);
+    }
+    return [...out];
+  }
+
+  function textMentionsSelf(text: string): boolean {
+    const lower = (text ?? "").toLowerCase();
+    return selfUsernames().some((username) => lower.includes(`@${username}`));
+  }
 
   async function resolvePeer(chatId: number | string): Promise<Api.TypeInputPeer> {
     const cached = peerCache.get(chatId);
@@ -83,16 +101,37 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
           const isPrivate = peer?.className === "PeerUser";
           const fromId = Number(m.senderId?.value ?? m.fromId?.userId?.value ?? 0);
           const chatId = isPrivate ? fromId : Number(peer?.channelId?.value ?? peer?.chatId?.value ?? fromId);
+          let replyToSelf = false;
+          try {
+            const reply = await m.getReplyMessage?.();
+            if (reply) {
+              replyToSelf = Boolean(reply.out) || Number(reply.senderId?.value ?? reply.fromId?.userId?.value ?? 0) === Number((me as any)?.id ?? 0);
+            }
+          } catch {
+            /* ignore reply lookup failure */
+          }
           const inputChat = await m.getInputChat?.();
           if (inputChat) {
             peerCache.set(chatId, inputChat);
           }
+          const chatType: IncomingMessage["chatType"] = isPrivate
+            ? "private"
+            : peer?.className === "PeerChannel"
+              ? "supergroup"
+              : peer?.className === "PeerChat"
+                ? "group"
+                : "unknown";
           await onMessage({
             text,
             fromId,
             chatId,
             messageId: Number(m.id),
             isPrivate,
+            chatType,
+            fromName: (m.sender as any)?.firstName ?? (m.sender as any)?.username,
+            mentioned: Boolean((m as any).mentioned) || textMentionsSelf(text),
+            replyToSelf,
+            chatTitle: (m.chat as any)?.title,
             media
           });
         } catch {
@@ -158,7 +197,7 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
     },
     async editLastMessage(chatId, messageId, text) {
       const peer = await resolvePeer(chatId);
-      await client.editMessage(peer, { message: messageId, text, parseMode: 'MarkdownV2' });
+      await client.editMessage(peer, { message: messageId, text });
     },
     async deleteMessages(chatId, messageIds, revoke = false) {
       const peer = await resolvePeer(chatId);
