@@ -20,6 +20,8 @@ export function makeBotAdapter(cfg: ProfileConfig): TgAdapter {
           chatId: ctx.chat.id,
           messageId: ctx.message.message_id,
           isPrivate: ctx.chat.type === "private",
+          isMentioned: ctx.message.reply_to_message?.from?.id === bot.botInfo.id ||
+                       (bot.botInfo.username && text?.includes("@" + bot.botInfo.username)) || false,
           fromName: ctx.from?.first_name,
           media
         };

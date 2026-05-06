@@ -9,6 +9,8 @@ import type { ConflictState } from "./conflict.js";
 const SYS = `Ты — внутренний "decision layer" для симуляции живой девушки. По текущему состоянию реши, как она отреагирует на новое сообщение от парня. Никаких разговоров — только JSON.`;
 
 interface BehaviorContext {
+  isGroup?: boolean;
+  isMentioned?: boolean;
   presence?: PresenceState;
   conflict?: ConflictState;
   conflictColdActive?: boolean;
@@ -105,13 +107,16 @@ export async function behaviorTick(
   const stage = findStage(cfg.stage);
   const rel = await readRelationship(cfg.slug);
   const communication = normalizeCommunicationProfile(cfg);
-  const state = `stage=${cfg.stage} (${stage.label})\nscore=${JSON.stringify(rel.score)}\nbase_ignore=${stage.defaults.ignoreChance}\nbase_delay=${stage.defaults.replyDelaySec.join("..")}s\n${communicationDecisionState(communication)}`;
+  const isGroupStr = ctx.isGroup ? "ДА" : "НЕТ";
+  const isMentionedStr = ctx.isMentioned ? "ДА" : "НЕТ";
+  const state = `isGroup=${isGroupStr}\nisMentioned=${isMentionedStr}\nstage=${cfg.stage} (${stage.label})\nscore=${JSON.stringify(rel.score)}\nbase_ignore=${stage.defaults.ignoreChance}\nbase_delay=${stage.defaults.replyDelaySec.join("..")}s\n${communicationDecisionState(communication)}`;
   const reactionsHint = reactionMenu(cfg.stage, rel.score);
 
   const history = recentHistory.slice(-8)
     .map(m => `${m.role === "user" ? "он" : "она"}: ${m.content}`).join("\n");
 
-  if (ctx.activeDialog && !ctx.conflictColdActive) {
+
+  if (ctx.activeDialog && !ctx.conflictColdActive && !ctx.isGroup) {
     const bubbles = sampleBubbles(communication, true);
     return {
       shouldReply: true,

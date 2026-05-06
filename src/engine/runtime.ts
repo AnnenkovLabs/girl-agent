@@ -368,11 +368,12 @@ export class Runtime extends EventEmitter {
   private async handleIncoming(m: IncomingMessage): Promise<void> {
     try {
       if (this.paused) return;
-      if (!m.isPrivate) return; // персонаж работает только в личных чатах — и для bot, и для userbot
+      if (!m.isPrivate && !this.cfg.allowGroups) return; // игнорируем группы, если они не разрешены
       await this.switchPrimaryAfterDumped(m.fromId);
       await this.ensureOwner(m.fromId);
       const isPrimary = this.isPrimaryFrom(m.fromId);
-      if (!isPrimary && !this.strangersAllowed()) {
+      const isGroupChatContext = !m.isPrivate;
+      if (!isPrimary && !this.strangersAllowed() && !isGroupChatContext) {
         this.emit("event", { type: "ignored", text: m.text, chatId: m.chatId, reason: "privacy-owner-only" } as RuntimeEvent);
         return;
       }
@@ -385,7 +386,28 @@ export class Runtime extends EventEmitter {
       this.incomingSeq.set(key, seq);
       this.pendingReplyIncoming.set(key, m);
       const hist = await this.historyFor(key, m.fromId, isPrimary);
-      const incomingText = this.mediaAwareText(m);
+      const isGroup = !m.isPrivate;
+      let incomingText = this.mediaAwareText(m);
+      if (isGroup && m.fromName) {
+        incomingText = `[${m.fromName}]: ${incomingText}`;
+      }
+
+      // Group chat early return logic (token saving)
+      if (isGroup && !m.isMentioned) {
+        const randomReplyChance = 0.02;
+        const botName = this.cfg.name.toLowerCase();
+        const textLower = incomingText.toLowerCase();
+        const containsName = textLower.includes(botName);
+
+        if (!containsName && Math.random() > randomReplyChance) {
+          if (hist.length > 50) hist.shift();
+          hist.push({ role: "user", content: incomingText, ts: Date.now() });
+          this.histories.set(key, hist);
+          return;
+        }
+      }
+
+      if (hist.length > 50) hist.shift();
       hist.push({ role: "user", content: incomingText, ts: Date.now() });
       this.histories.set(key, hist);
       this.emit("event", { type: "incoming", text: incomingText, chatId: m.chatId } as RuntimeEvent);
@@ -487,7 +509,9 @@ export class Runtime extends EventEmitter {
       ? Date.now() - (this.lastHerReplyTs.get(key) ?? 0) < 5 * 60 * 1000
       : false;
     const tick = await behaviorTick(this.llm, this.cfg, hist, incomingText, {
-      presence, conflict, conflictColdActive: coldActive, blockHint, activeDialog
+        presence, conflict, conflictColdActive: coldActive, blockHint, activeDialog,
+        isGroup: !m.isPrivate,
+        isMentioned: m.isMentioned
     });
     if (this.incomingSeq.get(key) !== seq) return;
 
@@ -579,7 +603,9 @@ export class Runtime extends EventEmitter {
     const conflict = scope === "primary" ? await readConflict(this.cfg.slug) : undefined;
     const lastUser = hist[hist.length - 1]?.role === "user" ? hist[hist.length - 1]?.content : undefined;
     const realism = scope === "primary" ? await loadRealismContext(this.cfg, lastUser) : undefined;
+    const isGroupChat = typeof chatId === "string" ? chatId.startsWith("-") : chatId < 0;
     const sys = await buildSystemPrompt(this.cfg, {
+      isGroupChat,
       dailyLife: this.dailyLife,
       conflict,
       incoming: lastUser,
