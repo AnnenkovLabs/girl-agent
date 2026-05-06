@@ -82,6 +82,8 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
           if (!text && !media) return;
           const peer = m.peerId;
           const isPrivate = peer?.className === "PeerUser";
+          const isMentioned = Boolean(m.mentioned);
+          const fromName = m.sender?.firstName || m.sender?.username || m.sender?.title;
           const fromId = Number(m.senderId?.value ?? m.fromId?.userId?.value ?? 0);
           const chatId = isPrivate ? fromId : Number(peer?.channelId?.value ?? peer?.chatId?.value ?? fromId);
           const inputChat = await m.getInputChat?.();
@@ -94,6 +96,8 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
             chatId,
             messageId: Number(m.id),
             isPrivate,
+            isMentioned,
+            fromName,
             media
           });
         } catch {

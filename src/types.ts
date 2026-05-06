@@ -106,6 +106,7 @@ export interface ProfileConfig {
   mcp: { id: string; secrets: Record<string, string> }[];
   ownerId?: number; // tg user id of the human (set on first message in practice / fallback)
   privacy?: PrivacyMode;
+  allowGroups?: boolean;
   createdAt: string;
   /** Часы сна (0-23). sleepFrom — когда ложится, sleepTo — когда просыпается. Может пересекать полночь. */
   sleepFrom: number;

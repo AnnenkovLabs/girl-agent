@@ -26,7 +26,7 @@ type Step =
   | "nationality" | "name-mode" | "name" | "name-tournament" | "name-tournament-knockout"
   | "age" | "sleep" | "sleep-custom-from" | "sleep-custom-to" | "sleep-custom-chance" | "vibe"
   | "comm-notifications" | "comm-style" | "comm-initiative" | "comm-life"
-  | "privacy" | "tz" | "persona-notes" | "generating" | "generation-error" | "stage" | "mcp-pick" | "mcp-secret" | "saving" | "done";
+  | "privacy" | "groups" | "tz" | "persona-notes" | "generating" | "generation-error" | "stage" | "mcp-pick" | "mcp-secret" | "saving" | "done";
 
 const TOURNAMENT_ROUNDS = 20;
 
@@ -98,6 +98,7 @@ export function Wizard({ initial, onDone }: {
   const [nightWakeStr, setNightWakeStr] = useState("5");
   const [communicationProfile, setCommunicationProfile] = useState<CommunicationProfile>(normalizeCommunicationProfile(initial));
   const [privacy, setPrivacy] = useState<PrivacyMode>(initial?.privacy ?? "owner-only");
+  const [allowGroups, setAllowGroups] = useState<boolean>(initial?.allowGroups ?? false);
 
   const [stage, setStage] = useState<StageId>(initial?.stage ?? "tg-given-cold");
 
@@ -875,16 +876,16 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="приватность Telegram" />
-        <Bar step={8} total={13} />
+        <Bar step={8} total={14} />
         <Box marginTop={1}>
           <SelectInput
             items={[
               { label: "Только я — отвечать только primary owner, остальных молча игнорировать", value: "owner-only" },
-              { label: "Разрешить сторонние чаты — коротко общаться с незнакомыми без памяти", value: "allow-strangers" }
+              { label: "Разрешить сторонние личные чаты — коротко общаться с незнакомыми в ЛС без памяти", value: "allow-strangers" }
             ]}
             onSelect={(it) => {
               setPrivacy(it.value as PrivacyMode);
-              setStep("tz");
+              setStep("groups");
             }}
           />
         </Box>
@@ -893,12 +894,33 @@ export function Wizard({ initial, onDone }: {
     );
   }
 
-  if (step === "tz") {
+
+  if (step === "groups") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Header sub="групповые чаты" />
+        <Bar step={8} total={14} />
+        <Box marginTop={1}>
+          <SelectInput
+            items={[
+              { label: "Только ЛС — игнорировать любые группы", value: "false" },
+              { label: "Разрешить группы — отвечать в группах (с учетом вероятностей и mentions)", value: "true" }
+            ]}
+            onSelect={(it) => {
+              setAllowGroups(it.value === "true");
+              setStep("tz");
+            }}
+          />
+        </Box>
+      </Box>
+    );
+  }
+if (step === "tz") {
     const matches = findTzByQuery(tzQuery, 8);
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="её часовой пояс (где живёт)" />
-        <Bar step={9} total={13} />
+        <Bar step={9} total={14} />
         <Box marginTop={1}><Text>поиск (город/страна/GMT): </Text>
           <TextInput value={tzQuery} onChange={setTzQuery} onSubmit={() => {
             if (matches[0]) {
@@ -923,7 +945,7 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="доп. пожелания к персоне (необязательно)" />
-        <Bar step={10} total={13} />
+        <Bar step={10} total={14} />
         <Box marginTop={1} flexDirection="column">
           <Text dimColor>Пример: дерзкая, учится на дизайнера, не любит аниме, сухая манера речи, живёт с мамой, ревнивая.</Text>
           <Box marginTop={1}><Text>notes: </Text>
@@ -982,7 +1004,7 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="на какой стадии вы сейчас?" />
-        <Bar step={11} total={13} />
+        <Bar step={11} total={14} />
         <Box marginTop={1}>
           <SelectInput
             limit={10}
@@ -1003,7 +1025,7 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="MCP инструменты (space — toggle, enter — далее)" />
-        <Bar step={12} total={13} />
+        <Bar step={12} total={14} />
         <McpToggle
           selected={pickedMcp}
           onChange={setPickedMcp}
@@ -1093,6 +1115,7 @@ export function Wizard({ initial, onDone }: {
         : { apiId: Number(apiId), apiHash, phone, sessionString },
       mcp: overrides.mcp ?? pickedMcp.map(id => ({ id, secrets: mcpSecrets[id] ?? {} })),
       privacy,
+      allowGroups,
       createdAt: new Date().toISOString(),
       sleepFrom: Number(sleepFromStr),
       sleepTo: Number(sleepToStr),
