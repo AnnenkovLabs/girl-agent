@@ -899,7 +899,7 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="групповые чаты" />
-        <Bar step={8} total={13} />
+        <Bar step={8} total={14} />
         <Box marginTop={1}>
           <SelectInput
             items={[

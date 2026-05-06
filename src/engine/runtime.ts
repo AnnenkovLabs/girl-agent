@@ -603,7 +603,8 @@ export class Runtime extends EventEmitter {
     const conflict = scope === "primary" ? await readConflict(this.cfg.slug) : undefined;
     const lastUser = hist[hist.length - 1]?.role === "user" ? hist[hist.length - 1]?.content : undefined;
     const realism = scope === "primary" ? await loadRealismContext(this.cfg, lastUser) : undefined;
-    const isGroupChat = typeof chatId === "string" ? chatId.startsWith("-") : chatId < 0;
+    // Use incoming message flag for 100% correct group chat detection (handles MTProto positive IDs)
+    const isGroupChat = incoming ? !incoming.isPrivate : (typeof chatId === "string" ? chatId.startsWith("-") : chatId < 0);
     const sys = await buildSystemPrompt(this.cfg, {
       isGroupChat,
       dailyLife: this.dailyLife,
