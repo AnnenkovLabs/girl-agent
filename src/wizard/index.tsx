@@ -881,7 +881,7 @@ export function Wizard({ initial, onDone }: {
           <SelectInput
             items={[
               { label: "Только я — отвечать только primary owner, остальных молча игнорировать", value: "owner-only" },
-              { label: "Разрешить сторонние чаты — коротко общаться с незнакомыми без памяти", value: "allow-strangers" }
+              { label: "Разрешить сторонние личные чаты — коротко общаться с незнакомыми в ЛС без памяти", value: "allow-strangers" }
             ]}
             onSelect={(it) => {
               setPrivacy(it.value as PrivacyMode);
