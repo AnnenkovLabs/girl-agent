@@ -1,0 +1,35 @@
+# Example docker-compose.yml for headless deployment.
+# Copy to docker-compose.yml and edit, or run directly:
+#   docker compose -f docker-compose.example.yml up -d
+#
+# For first-time setup (interactive ink wizard):
+#   docker compose run --rm girl-agent
+# Then once a profile exists, switch to detached mode:
+#   docker compose up -d
+version: "3.9"
+
+services:
+  girl-agent:
+    image: ghcr.io/thesashadev/girl-agent:latest
+    container_name: girl-agent
+    restart: unless-stopped
+    # interactive default (ink TUI); switch to "server --config /config/bot.json --headless"
+    # if you want pure logs and a json config.
+    command: ["server", "--config", "/config/bot.json", "--headless"]
+    environment:
+      GIRL_AGENT_DATA: /data
+      # alternatively, drive everything from env vars (no /config/bot.json needed):
+      # GIRL_AGENT_MODE: bot
+      # GIRL_AGENT_TOKEN: ${TG_BOT_TOKEN}
+      # GIRL_AGENT_API_PRESET: claudehub
+      # GIRL_AGENT_API_KEY: ${LLM_API_KEY}
+      # GIRL_AGENT_NAME: Аня
+      # GIRL_AGENT_AGE: "22"
+    volumes:
+      - girl-agent-data:/data
+      - ./bot.json:/config/bot.json:ro
+    # to peek at logs:
+    #   docker compose logs -f girl-agent
+
+volumes:
+  girl-agent-data:

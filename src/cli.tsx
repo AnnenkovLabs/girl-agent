@@ -10,6 +10,8 @@ import { generatePersonaPack } from "./engine/persona-gen.js";
 import { makeLLM } from "./llm/index.js";
 import { parseTzFlag, defaultTzForNationality } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
+import { runHeadlessJsonEvents } from "./headless.js";
+import { runServer } from "./server.js";
 import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "./presets/communication.js";
 import type { ProfileConfig, ClientMode, StageId, LLMProto, Nationality, CommunicationProfile, PrivacyMode } from "./types.js";
 
@@ -23,7 +25,15 @@ usage:
   npx girl-agent --reset --profile=<slug>
   npx girl-agent <flags>               # пропустить визард с аргументами
 
-required flags для headless setup (--name --age --stage --api-preset --api-key --mode):
+server (для систем без TTY: docker / systemd / cron / CI):
+  npx girl-agent server --print-config > bot.json
+  npx girl-agent server --config bot.json --headless
+  npx girl-agent server --print-systemd | --print-docker | --list
+
+установка одной командой (без node на машине):
+  curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/main/scripts/install.sh | sh
+
+required flags для headless setup (--name --age --stage --api-preset --mode; --api-key нужен только для провайдеров с авторизацией):
   --profile=<slug>            slug профиля
   --mode=bot|userbot
   --token=<bot_token>         для bot
@@ -32,7 +42,7 @@ required flags для headless setup (--name --age --stage --api-preset --api-ke
   --base-url=<url>            для custom
   --proto=openai|anthropic    для custom
   --model=<model>
-  --api-key=<key>
+  --api-key=<key>             не нужен для локальных LM Studio/Ollama
   --name=<имя>                конкретное имя; если пропустить — случайное из пула по nationality (турнир выбора имён доступен ТОЛЬКО в TUI визарде)
   --age=<n>
   --persona-notes=<text>      доп. пожелания к persona/speech/communication перед генерацией
@@ -58,13 +68,61 @@ async function main() {
     string: [
       "profile", "mode", "token", "api-id", "api-hash", "phone", "api-preset", "base-url", "proto", "model", "api-key",
       "name", "stage", "mcp", "nationality", "tz", "vibe", "persona-notes", "communication-preset",
-      "notifications", "message-style", "initiative", "life-sharing", "privacy"
+      "notifications", "message-style", "initiative", "life-sharing", "privacy", "config"
     ],
-    boolean: ["help", "list", "reset", "new"],
+    boolean: [
+      "help", "list", "reset", "new", "json-events", "headless", "server",
+      "print-config", "print-systemd", "print-docker", "no-start"
+    ],
     alias: { h: "help" }
   });
 
+  // Server subcommand: `npx girl-agent server [...]` or `--server` flag.
+  // Bypasses ink TUI entirely — uses readline + stdout logs. Maximally compatible
+  // with ssh w/o -t, docker w/o -it, systemd, cron, CI.
+  const positional = (argv._ as string[]) ?? [];
+  const isServer = positional[0] === "server" || !!argv.server || !!argv["print-config"] || !!argv["print-systemd"] || !!argv["print-docker"];
+  if (isServer) {
+    await runServer(argv as Record<string, unknown>);
+    return;
+  }
+
   if (argv.help) { process.stdout.write(HELP); return; }
+
+  // --- Sanity: TTY/raw-mode detection so terminals that can't render the
+  // wizard fail loudly instead of exiting silently after npm warnings.
+  // We only require a TTY when we know we'll need to draw the ink wizard or
+  // the live dashboard. Headless / --json-events / --list don't need it.
+  const isHeadless = !!(argv["json-events"] || argv.headless || argv.list || argv.help);
+  if (!isHeadless) {
+    const stdin = process.stdin as NodeJS.ReadStream & { isTTY?: boolean };
+    const stdout = process.stdout as NodeJS.WriteStream & { isTTY?: boolean };
+    const stdinOk = !!stdin.isTTY;
+    const stdoutOk = !!stdout.isTTY;
+    if (!stdinOk || !stdoutOk) {
+      process.stderr.write(
+        "\n[girl-agent] этот терминал не поддерживает интерактивный ink-визард (нет TTY).\n" +
+        `  stdin.isTTY = ${stdinOk}, stdout.isTTY = ${stdoutOk}\n\n` +
+        "что делать (для серверов / docker / ssh без -t / cron / CI):\n\n" +
+        "  1. поставь себе girl-agent одной командой (без node на машине):\n" +
+        "       curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/main/scripts/install.sh | sh\n" +
+        "     дальше:    girl-agent          # ink-визард в обычном tty\n\n" +
+        "  2. готовый конфиг + headless (для systemd / cron / CI):\n" +
+        "       girl-agent server --print-config > bot.json\n" +
+        "       # отредактируй bot.json\n" +
+        "       girl-agent server --config bot.json --headless\n\n" +
+        "  3. docker (всё внутри контейнера, ноль зависимостей на хосте):\n" +
+        "       docker run -it --rm -v girl-agent-data:/data \\\n" +
+        "         ghcr.io/thesashadev/girl-agent:latest\n\n" +
+        "  4. systemd:  girl-agent server --print-systemd\n" +
+        "     docker:   girl-agent server --print-docker\n\n" +
+        "  5. на windows быстрее всего — графический инсталлер girl-agent-installer.exe.\n"
+      );
+      process.exit(2);
+    }
+  }
+
+  const jsonEvents = !!(argv["json-events"] || argv.headless);
 
   if (argv.age != null) {
     const a = Number(argv.age);
@@ -94,13 +152,15 @@ async function main() {
       cfg.stage = "tg-given-cold";
       await writeConfig(cfg);
     }
-    await runRuntime(cfg);
+    await runRuntime(cfg, { jsonEvents });
     return;
   }
 
   // Headless flag-driven setup (skip wizard if essentials present)
   // name optional — генерим случайное по nationality если не задано
-  const haveEnoughForFlags = argv.mode && argv["api-preset"] && argv["api-key"] && argv.age && argv.stage;
+  const presetForFlags = argv["api-preset"] ? findPreset(String(argv["api-preset"])) : undefined;
+  const apiKeyRequiredForFlags = presetForFlags?.apiKeyRequired !== false;
+  const haveEnoughForFlags = argv.mode && argv["api-preset"] && (!apiKeyRequiredForFlags || argv["api-key"]) && argv.age && argv.stage;
   if (haveEnoughForFlags) {
     const cfg = await buildConfigFromFlags(argv);
     await writeConfig(cfg);
@@ -109,7 +169,7 @@ async function main() {
     const generated = await generatePersonaPack(llm, cfg.slug, cfg.name, cfg.age, cfg.nationality, personaNotesForGeneration(cfg));
     cfg.busySchedule = generated.busySchedule;
     await writeConfig(cfg);
-    await runRuntime(cfg);
+    await runRuntime(cfg, { jsonEvents });
     return;
   }
 
@@ -120,7 +180,7 @@ async function main() {
       const cfg = await readConfig(profiles[0]);
       if (cfg) {
         process.stdout.write(`загружаю профиль: ${cfg.name}\n`);
-        await runRuntime(cfg);
+        await runRuntime(cfg, { jsonEvents });
         return;
       }
     } else if (profiles.length > 1) {
@@ -135,7 +195,7 @@ async function main() {
     const inst = render(
       <Wizard onDone={async (cfg) => {
         inst.unmount();
-        await runRuntime(cfg);
+        await runRuntime(cfg, { jsonEvents });
         resolve();
       }} />,
       { exitOnCtrlC: true }
@@ -175,7 +235,7 @@ async function buildConfigFromFlags(argv: any): Promise<ProfileConfig> {
     tz,
     mode,
     stage: argv.stage as StageId,
-    llm: { presetId, proto, baseURL, apiKey: String(argv["api-key"]), model },
+    llm: { presetId, proto, baseURL, apiKey: String(argv["api-key"] ?? preset?.defaultApiKey ?? ""), model },
     telegram: mode === "bot"
       ? { botToken: String(argv.token ?? "") }
       : {
@@ -219,16 +279,33 @@ function personaNotesForGeneration(cfg: ProfileConfig): string {
   return parts.join("\n\n");
 }
 
-async function runRuntime(cfg: ProfileConfig) {
+async function runRuntime(cfg: ProfileConfig, opts: { jsonEvents?: boolean } = {}) {
   const rt = new Runtime(cfg);
   await rt.start();
+  if (opts.jsonEvents) {
+    // Headless / JSON-events mode — used by Rust desktop wrapper.
+    await runHeadlessJsonEvents(rt);
+    return;
+  }
   const inst = render(<Dashboard runtime={rt} />, { exitOnCtrlC: true });
   process.on("SIGINT", async () => { await rt.stop(); inst.unmount(); process.exit(0); });
   await inst.waitUntilExit();
   await rt.stop();
 }
 
+process.on("unhandledRejection", (reason) => {
+  const r = reason as { stack?: string } | string | undefined;
+  const text = (typeof r === "object" && r && r.stack) ? r.stack : String(reason);
+  process.stderr.write("[girl-agent] unhandled rejection: " + text + "\n");
+  process.exit(1);
+});
+
+process.on("uncaughtException", (err) => {
+  process.stderr.write("[girl-agent] uncaught: " + (err?.stack ?? err) + "\n");
+  process.exit(1);
+});
+
 main().catch((e) => {
-  process.stderr.write("fatal: " + (e?.stack ?? e) + "\n");
+  process.stderr.write("[girl-agent] fatal: " + (e?.stack ?? e) + "\n");
   process.exit(1);
 });

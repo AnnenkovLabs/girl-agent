@@ -1,0 +1,19 @@
+# Build-speed knobs.
+# - mold replaces ld for native Linux builds (5-10x faster linking).
+# - parallel-frontend gives compiler frontend more threads on nightly,
+#   but is opt-in and harmless to leave off; we use the rustflags only
+#   for the host target so the cross-compile isn't affected.
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
+
+[build]
+# Reuse compilation across cargo invocations; sccache is a process-level
+# wrapper, not a target-specific one, so it works for both linux and the
+# windows cross target.
+# (set RUSTC_WRAPPER=sccache from the shell when building)
