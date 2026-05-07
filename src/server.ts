@@ -11,7 +11,7 @@ import { Runtime } from "./engine/runtime.js";
 import { makeLLM } from "./llm/index.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { runHeadlessJsonEvents } from "./headless.js";
-import type { ProfileConfig, ClientMode, Nationality, StageId, LLMProto, PrivacyMode, TelegramProxy } from "./types.js";
+import type { ProfileConfig, ClientMode, Nationality, StageId, LLMProto, PrivacyMode } from "./types.js";
 
 /**
  * Server / automation entrypoint.
@@ -64,8 +64,6 @@ env-vars (для CI / docker secrets / k8s):
   GIRL_AGENT_API_PRESET     openai|anthropic|claudehub|...
   GIRL_AGENT_API_KEY        ключ от провайдера
   GIRL_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET
-  GIRL_AGENT_PROXY          socks5://host:port или mtproxy://host:port:secret
-  GIRL_AGENT_NO_WSS=1       отключить WSS (по умолчанию включён)
 
 для интерактивной первичной настройки запускай без флагов в обычном терминале —
 откроется ink-визард.
@@ -201,8 +199,6 @@ function configFromEnv(): ProfileConfig | null {
     process.stderr.write(`[server] unknown api preset in env: ${presetId}\n`);
     process.exit(1);
   }
-  const proxy = parseProxyEnv(e.GIRL_AGENT_PROXY);
-  const useWSS = e.GIRL_AGENT_NO_WSS !== "1";
   const nationality = (e.GIRL_AGENT_NATIONALITY === "UA" ? "UA" : "RU") as Nationality;
   const name = e.GIRL_AGENT_NAME || pickRandomNames(nationality, 1)[0]!;
   const age = Number(e.GIRL_AGENT_AGE ?? 18);
@@ -221,13 +217,11 @@ function configFromEnv(): ProfileConfig | null {
       model: e.GIRL_AGENT_MODEL ?? preset.defaultModel
     },
     telegram: mode === "bot"
-      ? { botToken: e.GIRL_AGENT_TOKEN ?? "", useWSS, proxy }
+      ? { botToken: e.GIRL_AGENT_TOKEN ?? "" }
       : {
           apiId: Number(e.GIRL_AGENT_TG_API_ID ?? 0),
           apiHash: e.GIRL_AGENT_TG_API_HASH ?? "",
-          phone: e.GIRL_AGENT_TG_PHONE ?? "",
-          useWSS,
-          proxy
+          phone: e.GIRL_AGENT_TG_PHONE ?? ""
         },
     mcp: [],
     privacy: "owner-only" as PrivacyMode,
@@ -308,34 +302,6 @@ function validateConfig(raw: unknown): ProfileConfig {
 
 // ---------------- ops scaffolds ----------------
 
-/** Parse GIRL_AGENT_PROXY env var: socks5://host:port or mtproxy://host:port:secret */
-function parseProxyEnv(raw?: string): TelegramProxy | undefined {
-  if (!raw) return undefined;
-  if (raw.startsWith("socks5://")) {
-    const body = raw.slice("socks5://".length);
-    let auth: string | undefined;
-    let hostPort: string;
-    if (body.includes("@")) {
-      [auth, hostPort] = body.split("@") as [string, string];
-    } else {
-      hostPort = body;
-    }
-    const [host, portStr] = hostPort!.split(":") as [string, string];
-    const port = Number(portStr);
-    if (!host || !port) return undefined;
-    const username = auth?.split(":")[0];
-    const password = auth?.split(":").slice(1).join(":");
-    return { type: "socks5", host, port, username, password };
-  }
-  if (raw.startsWith("mtproxy://")) {
-    const body = raw.slice("mtproxy://".length);
-    const parts = body.split(":");
-    if (parts.length < 3) return undefined;
-    return { type: "mtproxy", host: parts[0]!, port: Number(parts[1]), secret: parts.slice(2).join(":") };
-  }
-  return undefined;
-}
-
 function buildConfigTemplate(): string {
   const sample: ProfileConfig = {
     slug: "anya",
@@ -352,7 +318,7 @@ function buildConfigTemplate(): string {
       apiKey: "REPLACE_ME",
       model: "claude-sonnet-4.6"
     },
-    telegram: { botToken: "REPLACE_ME", useWSS: true },
+    telegram: { botToken: "REPLACE_ME" },
     mcp: [],
     privacy: "owner-only",
     createdAt: new Date().toISOString(),

@@ -9,7 +9,7 @@ import { LLM_PRESETS, findPreset } from "../presets/llm.js";
 import { MCP_PRESETS } from "../presets/mcp.js";
 import { STAGE_PRESETS } from "../presets/stages.js";
 import { COMMUNICATION_PRESETS, communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "../presets/communication.js";
-import type { ProfileConfig, ClientMode, LLMProto, StageId, Nationality, BusySlot, CommunicationProfile, PrivacyMode, TelegramProxy } from "../types.js";
+import type { ProfileConfig, ClientMode, LLMProto, StageId, Nationality, BusySlot, CommunicationProfile, PrivacyMode } from "../types.js";
 import { slugify, writeConfig } from "../storage/md.js";
 import { makeLLM } from "../llm/index.js";
 import { generatePersonaPack } from "../engine/persona-gen.js";
@@ -22,7 +22,6 @@ export interface WizardResult { config: ProfileConfig; }
 
 type Step =
   | "splash" | "mode" | "tg-bot-token" | "tg-userbot-source" | "tg-userbot-api" | "tg-userbot-phone" | "tg-userbot-code" | "tg-userbot-pass"
-  | "proxy"
   | "api-preset" | "api-base" | "api-model" | "api-model-custom" | "api-key"
   | "nationality" | "name-mode" | "name" | "name-tournament" | "name-tournament-knockout"
   | "age" | "sleep" | "sleep-custom-from" | "sleep-custom-to" | "sleep-custom-chance" | "vibe"
@@ -99,10 +98,6 @@ export function Wizard({ initial, onDone }: {
   const [nightWakeStr, setNightWakeStr] = useState("5");
   const [communicationProfile, setCommunicationProfile] = useState<CommunicationProfile>(normalizeCommunicationProfile(initial));
   const [privacy, setPrivacy] = useState<PrivacyMode>(initial?.privacy ?? "owner-only");
-  const [proxyConfig, setProxyConfig] = useState<TelegramProxy | undefined>(initial?.telegram?.proxy);
-  const [proxyInput, setProxyInput] = useState("");
-  const [useWSS, setUseWSS] = useState<boolean>(initial?.telegram?.useWSS !== false);
-
   const [stage, setStage] = useState<StageId>(initial?.stage ?? "tg-given-cold");
 
   const [pickedMcp, setPickedMcp] = useState<string[]>(initial?.mcp?.map(m => m.id) ?? []);
@@ -228,7 +223,7 @@ export function Wizard({ initial, onDone }: {
         <Box marginTop={1}><Text color="cyan">{">  "}</Text>
           <TextInput value={botToken} onChange={setBotToken} mask="•" onSubmit={() => {
             if (!botToken.includes(":")) { setError("токен невалидный"); return; }
-            setError(null); setStep("proxy");
+            setError(null); setStep("api-preset");
           }} />
         </Box>
         {error && <Text color="red">{error}</Text>}
@@ -319,7 +314,7 @@ export function Wizard({ initial, onDone }: {
                   promptPassword: () => new Promise<string>((res) => setPassResolver(() => res))
                 });
                 setSessionString(sess);
-                setStep("proxy");
+                setStep("api-preset");
               } catch (e) {
                 setError((e as Error).message);
                 setStep("tg-userbot-phone");
@@ -350,7 +345,7 @@ export function Wizard({ initial, onDone }: {
                   setApiId(String(result.apiId));
                   setApiHash(result.apiHash);
                   setSessionString(result.sessionString);
-                  setStep("proxy");
+                  setStep("api-preset");
                 }
               } catch (e) {
                 setError((e as Error).message);
@@ -381,7 +376,7 @@ export function Wizard({ initial, onDone }: {
                 setApiId(String(result.apiId));
                 setApiHash(result.apiHash);
                 setSessionString(result.sessionString);
-                setStep("proxy");
+                setStep("api-preset");
               } catch (e) {
                 setError((e as Error).message);
                 setStep("tg-userbot-phone");
@@ -393,73 +388,6 @@ export function Wizard({ initial, onDone }: {
         </Box>
         {error && <Text color="red">{error}</Text>}
         <Text dimColor>входим в аккаунт…</Text>
-      </Box>
-    );
-  }
-
-  if (step === "proxy") {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Header sub="прокси для Telegram (обход блокировок в РФ)" />
-        <Bar step={1} total={9} />
-        <Box marginTop={1}>
-          <SelectInput
-            items={[
-              { label: "✅ WSS (порт 443) — обходит большинство блокировок (рекомендуется)", value: "wss" },
-              { label: "🧶 SOCKS5 прокси — ввести адрес", value: "socks5" },
-              { label: "❌ Без прокси (прямое TCP-подключение, не работает в РФ без VPN)", value: "none" }
-            ]}
-            onSelect={(it) => {
-              if (it.value === "wss") {
-                setUseWSS(true);
-                setProxyConfig(undefined);
-                setStep("api-preset");
-              } else if (it.value === "socks5") {
-                setUseWSS(false);
-                setProxyInput("");
-                setError(null);
-                setStep("proxy-socks" as Step);
-              } else {
-                setUseWSS(false);
-                setProxyConfig(undefined);
-                setStep("api-preset");
-              }
-            }}
-          />
-        </Box>
-        <Box marginTop={1}><Text dimColor>В РФ Telegram заблокирован на уровне провайдеров. WSS обходит блокировку через порт 443.</Text></Box>
-      </Box>
-    );
-  }
-
-  if (step === ("proxy-socks" as Step)) {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Header sub="SOCKS5 прокси (host:port или user:pass@host:port)" />
-        <Bar step={1} total={9} />
-        <Box marginTop={1}><Text>socks5:// </Text>
-          <TextInput value={proxyInput} onChange={setProxyInput} onSubmit={() => {
-            const raw = proxyInput.trim();
-            if (!raw) { setError("введи адрес"); return; }
-            let auth: string | undefined;
-            let hostPort: string;
-            if (raw.includes("@")) {
-              [auth, hostPort] = raw.split("@") as [string, string];
-            } else {
-              hostPort = raw;
-            }
-            const [host, portStr] = hostPort!.split(":") as [string, string];
-            const port = Number(portStr);
-            if (!host || !port) { setError("формат: host:port"); return; }
-            const username = auth?.split(":")[0];
-            const password = auth?.split(":").slice(1).join(":");
-            setProxyConfig({ type: "socks5", host, port, username, password });
-            setError(null);
-            setStep("api-preset");
-          }} />
-        </Box>
-        {error && <Text color="red">{error}</Text>}
-        <Box marginTop={1}><Text dimColor>пример: 127.0.0.1:1080 или user:pass@proxy.example.com:1080</Text></Box>
       </Box>
     );
   }
@@ -1164,8 +1092,8 @@ export function Wizard({ initial, onDone }: {
       stage: overrides.stage ?? stage,
       llm: { presetId: llmPresetId, proto: llmProto, baseURL: llmBaseURL, apiKey: llmKey, model: llmModel },
       telegram: mode === "bot"
-        ? { botToken, useWSS, proxy: proxyConfig }
-        : { apiId: Number(apiId), apiHash, phone, sessionString, useWSS, proxy: proxyConfig },
+        ? { botToken }
+        : { apiId: Number(apiId), apiHash, phone, sessionString },
       mcp: overrides.mcp ?? pickedMcp.map(id => ({ id, secrets: mcpSecrets[id] ?? {} })),
       privacy,
       createdAt: new Date().toISOString(),

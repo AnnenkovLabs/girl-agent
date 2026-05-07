@@ -1,10 +1,9 @@
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
-import type { ProfileConfig, TelegramProxy } from "../types.js";
+import type { ProfileConfig } from "../types.js";
 import type { IncomingMedia, TgAdapter } from "./index.js";
 import { NewMessage } from "telegram/events/index.js";
 import { hasSpoilers, toHtmlWithSpoilers } from "./markdown.js";
-import type { ProxyInterface } from "telegram/network/connection/TCPMTProxy.js";
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -17,22 +16,14 @@ function debug(message: string): void {
   if (process.env.GIRL_AGENT_DEBUG === "1") process.stderr.write(`${message}\n`);
 }
 
-function buildGramJSProxy(p: TelegramProxy): ProxyInterface {
-  if (p.type === "socks5") {
-    return { socksType: 5, ip: p.host, port: p.port, username: p.username, password: p.password };
-  }
-  return { MTProxy: true, ip: p.host, port: p.port, secret: p.secret };
-}
-
 export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
   const apiId = cfg.telegram.apiId;
   const apiHash = cfg.telegram.apiHash;
   const session = cfg.telegram.sessionString ?? "";
   if (!apiId || !apiHash) throw new Error("API_ID/API_HASH missing for userbot");
 
-  const proxy = cfg.telegram.proxy ? buildGramJSProxy(cfg.telegram.proxy) : undefined;
-  const useWSS = cfg.telegram.useWSS !== false && !proxy;
-  debug(`[userbot] creating TelegramClient (useWSS=${useWSS}, proxy=${proxy ? cfg.telegram.proxy!.type : "none"})…`);
+  const useWSS = cfg.telegram.useWSS !== false;
+  debug(`[userbot] creating TelegramClient (useWSS=${useWSS})…`);
 
   const client = new TelegramClient(new StringSession(session), apiId, apiHash, {
     connectionRetries: 5,
@@ -40,8 +31,7 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
     retryDelay: 3000,
     autoReconnect: true,
     floodSleepThreshold: 120,
-    useWSS,
-    proxy
+    useWSS
   });
   client.onError = async () => { /* swallow _updateLoop ping TIMEOUT noise */ };
   let me: Api.User | null = null;
@@ -198,14 +188,10 @@ export async function userbotLogin(opts: {
   phone: string;
   promptCode: () => Promise<string>;
   promptPassword: () => Promise<string>;
-  proxy?: TelegramProxy;
 }): Promise<string> {
-  const proxy = opts.proxy ? buildGramJSProxy(opts.proxy) : undefined;
-  const useWSS = !proxy;
   const client = new TelegramClient(new StringSession(""), opts.apiId, opts.apiHash, {
     connectionRetries: 5,
-    useWSS,
-    proxy
+    useWSS: true
   });
   await client.start({
     phoneNumber: async () => opts.phone,

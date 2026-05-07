@@ -14,7 +14,7 @@ import { runHeadlessJsonEvents } from "./headless.js";
 import { runServer } from "./server.js";
 import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "./presets/communication.js";
 import { findStage } from "./presets/stages.js";
-import type { ProfileConfig, ClientMode, StageId, LLMProto, Nationality, CommunicationProfile, PrivacyMode, TelegramProxy } from "./types.js";
+import type { ProfileConfig, ClientMode, StageId, LLMProto, Nationality, CommunicationProfile, PrivacyMode } from "./types.js";
 
 const HELP = `
 girl-agent — AI girl for Telegram
@@ -56,10 +56,6 @@ required flags для headless setup (--name --age --stage --api-preset --mode; 
   --nationality=RU|UA         (по умолчанию RU)
   --tz=<value>                IANA "Europe/Moscow" / "GMT+3" / "+3" / "Киев" — поиск
   --stage=<id|num>            1=met-irl-got-tg 2=tg-given-cold 3=tg-given-warming 4=convinced 5=first-date-done 6=dating-early 7=dating-stable 8=long-term
-  --proxy=socks5://host:port   SOCKS5 прокси (обход блокировок Telegram в РФ)
-  --proxy=socks5://user:pass@host:port
-  --proxy=mtproxy://host:port:secret
-  --no-wss                    отключить WebSocket (по умолчанию WSS включён)
   --mcp=exa:KEY               можно несколько раз
   --new                       принудительно открыть визард для нового профиля
   --list                      показать профили
@@ -73,11 +69,11 @@ async function main() {
     string: [
       "profile", "mode", "token", "api-id", "api-hash", "phone", "api-preset", "base-url", "proto", "model", "api-key",
       "name", "stage", "mcp", "nationality", "tz", "vibe", "persona-notes", "communication-preset",
-      "notifications", "message-style", "initiative", "life-sharing", "privacy", "config", "proxy"
+      "notifications", "message-style", "initiative", "life-sharing", "privacy", "config"
     ],
     boolean: [
       "help", "list", "reset", "new", "json-events", "headless", "server",
-      "print-config", "print-systemd", "print-docker", "no-start", "no-wss"
+      "print-config", "print-systemd", "print-docker", "no-start"
     ],
     alias: { h: "help" }
   });
@@ -232,9 +228,6 @@ async function buildConfigFromFlags(argv: any): Promise<ProfileConfig> {
     return { id: id ?? "", secrets };
   });
 
-  const proxy = parseProxyFlag(argv.proxy);
-  const useWSS = !argv["no-wss"];
-
   return {
     slug,
     name,
@@ -245,13 +238,11 @@ async function buildConfigFromFlags(argv: any): Promise<ProfileConfig> {
     stage: findStage(argv.stage as string).id,
     llm: { presetId, proto, baseURL, apiKey: String(argv["api-key"] ?? preset?.defaultApiKey ?? ""), model },
     telegram: mode === "bot"
-      ? { botToken: String(argv.token ?? ""), useWSS, proxy }
+      ? { botToken: String(argv.token ?? "") }
       : {
           apiId: Number(argv["api-id"] ?? 0),
           apiHash: String(argv["api-hash"] ?? ""),
-          phone: String(argv.phone ?? ""),
-          useWSS,
-          proxy
+          phone: String(argv.phone ?? "")
         },
     mcp: mcps,
     privacy,
@@ -279,35 +270,6 @@ function communicationFromFlags(argv: any): CommunicationProfile {
 
 function oneOf<T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T {
   return typeof raw === "string" && allowed.includes(raw as T) ? raw as T : fallback;
-}
-
-/** Parse --proxy=socks5://host:port or --proxy=mtproxy://host:port:secret */
-function parseProxyFlag(raw: unknown): TelegramProxy | undefined {
-  if (typeof raw !== "string" || !raw) return undefined;
-  if (raw.startsWith("socks5://")) {
-    const body = raw.slice("socks5://".length);
-    let auth: string | undefined;
-    let hostPort: string;
-    if (body.includes("@")) {
-      [auth, hostPort] = body.split("@") as [string, string];
-    } else {
-      hostPort = body;
-    }
-    const [host, portStr] = hostPort!.split(":") as [string, string];
-    const port = Number(portStr);
-    if (!host || !port) { process.stderr.write("--proxy: invalid socks5 url\n"); return undefined; }
-    const username = auth?.split(":")[0];
-    const password = auth?.split(":").slice(1).join(":");
-    return { type: "socks5", host, port, username, password };
-  }
-  if (raw.startsWith("mtproxy://")) {
-    const body = raw.slice("mtproxy://".length);
-    const parts = body.split(":");
-    if (parts.length < 3) { process.stderr.write("--proxy: mtproxy format: mtproxy://host:port:secret\n"); return undefined; }
-    return { type: "mtproxy", host: parts[0]!, port: Number(parts[1]), secret: parts.slice(2).join(":") };
-  }
-  process.stderr.write("--proxy: unknown scheme (use socks5:// or mtproxy://)\n");
-  return undefined;
 }
 
 function personaNotesForGeneration(cfg: ProfileConfig): string {
