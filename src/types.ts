@@ -12,8 +12,6 @@ export interface LLMPreset {
   proto: LLMProto;
   baseURL?: string;
   defaultModel: string;
-  defaultApiKey?: string;
-  apiKeyRequired?: boolean;
   models?: string[];
   custom?: boolean;
   hint?: string;

@@ -14,10 +14,8 @@ export const LLM_PRESETS: LLMPreset[] = [
     proto: "openai",
     baseURL: "http://localhost:1234/v1",
     defaultModel: "",
-    defaultApiKey: "lm-studio",
-    apiKeyRequired: false,
     custom: true,
-    hint: "локально, OpenAI-compatible endpoint; ключ не нужен"
+    hint: "локально, OpenAI-compatible endpoint"
   },
   {
     id: "ollama",
@@ -25,10 +23,8 @@ export const LLM_PRESETS: LLMPreset[] = [
     proto: "openai",
     baseURL: "http://localhost:11434/v1",
     defaultModel: "llama3.1",
-    defaultApiKey: "ollama",
-    apiKeyRequired: false,
     custom: true,
-    hint: "локально через /v1; ключ не нужен"
+    hint: "локально через /v1"
   },
   {
     id: "anthropic",

@@ -23,7 +23,7 @@ usage:
   npx girl-agent --reset --profile=<slug>
   npx girl-agent <flags>               # пропустить визард с аргументами
 
-required flags для headless setup (--name --age --stage --api-preset --mode; --api-key нужен только для провайдеров с авторизацией):
+required flags для headless setup (--name --age --stage --api-preset --api-key --mode):
   --profile=<slug>            slug профиля
   --mode=bot|userbot
   --token=<bot_token>         для bot
@@ -32,7 +32,7 @@ required flags для headless setup (--name --age --stage --api-preset --mode; 
   --base-url=<url>            для custom
   --proto=openai|anthropic    для custom
   --model=<model>
-  --api-key=<key>             не нужен для локальных LM Studio/Ollama
+  --api-key=<key>
   --name=<имя>                конкретное имя; если пропустить — случайное из пула по nationality (турнир выбора имён доступен ТОЛЬКО в TUI визарде)
   --age=<n>
   --persona-notes=<text>      доп. пожелания к persona/speech/communication перед генерацией
@@ -100,9 +100,7 @@ async function main() {
 
   // Headless flag-driven setup (skip wizard if essentials present)
   // name optional — генерим случайное по nationality если не задано
-  const presetForFlags = argv["api-preset"] ? findPreset(String(argv["api-preset"])) : undefined;
-  const apiKeyRequiredForFlags = presetForFlags?.apiKeyRequired !== false;
-  const haveEnoughForFlags = argv.mode && argv["api-preset"] && (!apiKeyRequiredForFlags || argv["api-key"]) && argv.age && argv.stage;
+  const haveEnoughForFlags = argv.mode && argv["api-preset"] && argv["api-key"] && argv.age && argv.stage;
   if (haveEnoughForFlags) {
     const cfg = await buildConfigFromFlags(argv);
     await writeConfig(cfg);
@@ -177,7 +175,7 @@ async function buildConfigFromFlags(argv: any): Promise<ProfileConfig> {
     tz,
     mode,
     stage: argv.stage as StageId,
-    llm: { presetId, proto, baseURL, apiKey: String(argv["api-key"] ?? preset?.defaultApiKey ?? ""), model },
+    llm: { presetId, proto, baseURL, apiKey: String(argv["api-key"]), model },
     telegram: mode === "bot"
       ? { botToken: String(argv.token ?? "") }
       : {

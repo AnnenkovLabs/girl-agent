@@ -1,4 +1,4 @@
-![girl-agent banner](https://girl-agent.com/og-image.png)
+﻿![girl-agent banner](https://girl-agent.com/og-image.png)
 
 [website]: https://girl-agent.com
 [docs]: https://docs.girl-agent.com
@@ -10,8 +10,6 @@
 Со всеми проблемами и багами пишите в Issues.
 ТГ создателя - @voided_net
 
-Тг канал: https://t.me/GirlAgentAI/
-Тг сообщество: https://t.me/GirlAgentAI_chat/
 ---
 
 ## Содержание
@@ -50,22 +48,6 @@ Wizard задаст пару вопросов — имя, возраст, Telegr
 ```powershell
 npx @thesashadev/girl-agent --profile=arina
 ```
-
-**Через Docker (рекомендуется для сервера):**
-
-Первый запуск с интерактивом (для настройки через визард):
-```bash
-docker-compose run --rm -it girl-agent
-```
-*(пройдите все шаги и после появления дашборда нажмите `Ctrl+C`)*
-
-Последующие (запуск в фоне):
-```bash
-docker-compose up -d
-```
-*(если профилей несколько, запустите конкретный так: `docker-compose run -d girl-agent node dist/cli.js --profile=arina`)*
-
-*(посмотреть логи: `docker-compose logs -f`)*
 
 **Из исходников:**
 
