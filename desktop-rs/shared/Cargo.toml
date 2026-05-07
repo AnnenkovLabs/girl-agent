@@ -1,0 +1,20 @@
+[package]
+name = "girl-agent-shared"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Shared types, theme, and Node.js child-process client for the girl-agent desktop app and installer."
+
+[dependencies]
+iced = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+async-channel = { workspace = true }
+futures-util = { workspace = true }

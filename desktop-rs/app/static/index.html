@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>girl-agent · web</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <script>
+      window.__TOKEN__ = "%%TOKEN%%";
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-name">girl-agent</span>
+        <span class="brand-tag">/ web dashboard</span>
+      </div>
+      <div class="status" id="status">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">connecting…</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card identity" id="identity">
+        <div class="identity-name">
+          <span id="profile-name">—</span>
+          <span class="muted" id="profile-meta"></span>
+        </div>
+        <div class="identity-stage">
+          <span class="muted">stage:</span>
+          <span id="stage-label">—</span>
+        </div>
+      </section>
+
+      <section class="card scores">
+        <h2>отношение</h2>
+        <ul id="score-list">
+          <li data-key="interest"><span class="key">interest</span><span class="bar"><span class="fill"></span></span><span class="val">0</span></li>
+          <li data-key="trust"><span class="key">trust</span><span class="bar"><span class="fill"></span></span><span class="val">0</span></li>
+          <li data-key="attraction"><span class="key">attraction</span><span class="bar"><span class="fill"></span></span><span class="val">0</span></li>
+          <li data-key="annoyance"><span class="key">annoyance</span><span class="bar"><span class="fill"></span></span><span class="val">0</span></li>
+          <li data-key="cringe"><span class="key">cringe</span><span class="bar"><span class="fill"></span></span><span class="val">0</span></li>
+        </ul>
+      </section>
+
+      <section class="card log">
+        <div class="log-header">
+          <h2>лог</h2>
+          <span class="muted" id="log-count">0 строк</span>
+        </div>
+        <pre id="log"></pre>
+      </section>
+
+      <section class="card prompt">
+        <form id="cmd-form">
+          <span class="prompt-prefix">&gt;</span>
+          <input id="cmd" type="text" autocomplete="off" placeholder=":status, :pause, :stage convinced, :help" />
+          <button type="submit">отправить</button>
+        </form>
+        <p class="hint muted">команды начинаются с <code>:</code> — точно как в нативном дашборде</p>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

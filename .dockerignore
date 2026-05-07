@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.github
+desktop-rs
+*.log
+.env
+.env.*
+attachments
+plan-*.md
+README.txt

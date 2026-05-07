@@ -3,7 +3,16 @@ import path from "node:path";
 import type { ProfileConfig, RelationshipScore } from "../types.js";
 import { normalizeCommunicationProfile } from "../presets/communication.js";
 
-export const DATA_ROOT = path.resolve(process.cwd(), "data");
+/**
+ * Корневая директория профилей.
+ *
+ * Можно переопределить через `GIRL_AGENT_DATA` (используется десктоп-обвязкой,
+ * чтобы хранить данные в `%APPDATA%/girl-agent/data` или `~/.local/share/...`).
+ * По-умолчанию — `./data` относительно cwd, как раньше.
+ */
+export const DATA_ROOT = process.env.GIRL_AGENT_DATA
+  ? path.resolve(process.env.GIRL_AGENT_DATA)
+  : path.resolve(process.cwd(), "data");
 
 export function profileDir(slug: string): string {
   return path.join(DATA_ROOT, slug);
