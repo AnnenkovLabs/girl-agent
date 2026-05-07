@@ -1,0 +1,226 @@
+/* Brand fonts — same TTFs the native app uses, served from the embedded HTTP server. */
+@font-face {
+  font-family: "Unbounded";
+  font-weight: 400;
+  src: url("/assets/fonts/Unbounded-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Unbounded";
+  font-weight: 700;
+  src: url("/assets/fonts/Unbounded-Bold.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Onest";
+  font-weight: 400;
+  src: url("/assets/fonts/Onest-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Onest";
+  font-weight: 500;
+  src: url("/assets/fonts/Onest-Medium.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Onest";
+  font-weight: 700;
+  src: url("/assets/fonts/Onest-Bold.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 400;
+  src: url("/assets/fonts/JetBrainsMono-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  src: url("/assets/fonts/InstrumentSerif-Italic.ttf") format("truetype");
+  font-display: swap;
+}
+
+/* Palette */
+:root {
+  --bone: #ECE7DA;
+  --bone2: #E3DDCD;
+  --ink: #0C0A06;
+  --accent: #E8412A;
+  --accent2: #C4DC3C;
+  --accent3: #FF7351;
+  --muted: #6F6957;
+  --line: #CDC6B1;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bone);
+  color: var(--ink);
+  font-family: "Onest", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+body { min-height: 100vh; }
+
+a, a:visited { color: var(--ink); }
+
+/* Topbar */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bone);
+}
+.brand-name {
+  font-family: "Unbounded", sans-serif;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.brand-tag {
+  margin-left: 10px;
+  font-family: "Instrument Serif", serif;
+  font-style: italic;
+  color: var(--muted);
+}
+.status { display: flex; align-items: center; gap: 8px; font-family: "JetBrains Mono", monospace; font-size: 13px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent3); }
+.dot.live { background: var(--accent2); }
+.dot.dead { background: var(--accent); }
+
+/* Layout */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr auto;
+  gap: 18px;
+  padding: 24px 28px 28px;
+  max-width: 1200px;
+  margin: 0 auto;
+  min-height: calc(100vh - 80px);
+}
+.identity { grid-column: 1 / 3; }
+.scores   { grid-column: 1 / 2; }
+.log      { grid-column: 2 / 3; grid-row: 2 / 4; }
+.prompt   { grid-column: 1 / 3; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .identity, .scores, .log, .prompt { grid-column: 1 / 2; }
+  .log { grid-row: auto; }
+}
+
+/* Card */
+.card {
+  background: var(--bone2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-family: "Unbounded", sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--muted);
+}
+
+/* Identity */
+.identity-name {
+  font-family: "Unbounded", sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+.identity-stage { font-size: 14px; color: var(--ink); }
+.muted { color: var(--muted); font-weight: 400; font-size: 0.9em; }
+
+/* Scores */
+.scores ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.scores li { display: grid; grid-template-columns: 110px 1fr 56px; align-items: center; gap: 12px; }
+.scores .key { font-family: "JetBrains Mono", monospace; color: var(--ink); font-size: 14px; }
+.scores .val { font-family: "JetBrains Mono", monospace; text-align: right; }
+.scores .bar { display: block; height: 10px; background: var(--line); border-radius: 999px; position: relative; overflow: hidden; }
+.scores .fill {
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 0;
+  background: var(--accent2);
+  transition: width 200ms ease, background 200ms ease;
+}
+.scores li[data-key="annoyance"] .fill,
+.scores li[data-key="cringe"] .fill { background: var(--accent); }
+
+/* Log */
+.log { display: flex; flex-direction: column; min-height: 280px; }
+.log-header { display: flex; justify-content: space-between; align-items: baseline; }
+.log pre {
+  flex: 1;
+  margin: 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  background: var(--ink);
+  color: var(--bone);
+  padding: 16px;
+  border-radius: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 50vh;
+}
+.log .ts { color: var(--muted); margin-right: 8px; }
+.log .incoming { color: var(--bone); }
+.log .outgoing { color: var(--accent2); }
+.log .ignored  { color: var(--muted); }
+.log .error    { color: var(--accent3); }
+.log .info     { color: var(--bone); }
+.log .response { color: var(--accent2); }
+
+/* Prompt */
+.prompt form { display: flex; gap: 10px; align-items: center; }
+.prompt-prefix { font-family: "JetBrains Mono", monospace; color: var(--accent); font-size: 18px; }
+.prompt input {
+  flex: 1;
+  background: var(--bone);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 14px;
+  color: var(--ink);
+}
+.prompt input:focus { outline: 2px solid var(--accent3); border-color: var(--accent3); }
+.prompt button {
+  background: var(--ink);
+  color: var(--bone);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-family: "Onest", sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+}
+.prompt button:hover { background: var(--accent3); color: var(--ink); }
+.prompt code { font-family: "JetBrains Mono", monospace; background: var(--bone); padding: 1px 5px; border-radius: 4px; }
+
+/* Landing */
+body.landing { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+.landing-card { max-width: 540px; }
+.landing-card h1 { font-family: "Unbounded", sans-serif; margin-top: 0; }
+.landing-card code { font-family: "JetBrains Mono", monospace; background: var(--bone); padding: 1px 6px; border-radius: 4px; }

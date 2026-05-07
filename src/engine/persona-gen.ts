@@ -10,6 +10,41 @@ type ProgressReporter = (percent: number, status: string) => void;
 
 const WEEKDAYS: Weekday[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
+const BUSY_SCHEDULE_SCHEMA = {
+  name: "busy_schedule",
+  strict: false,
+  schema: {
+    type: "object",
+    properties: {
+      busySchedule: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            label: { type: "string" },
+            days: {
+              type: "array",
+              items: { type: "string", enum: WEEKDAYS }
+            },
+            from: { type: "string" },
+            to: { type: "string" },
+            checkAfterMin: {
+              type: "array",
+              items: { type: "number" },
+              minItems: 2,
+              maxItems: 2
+            }
+          },
+          required: ["label", "from", "to"],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ["busySchedule"],
+    additionalProperties: false
+  }
+};
+
 export async function generatePersonaPack(
   llm: LLMClient,
   slug: string,
@@ -131,7 +166,7 @@ export async function generatePersonaPack(
   onProgress?.(65, "генерируем communication.md…");
   const boundaries = await llm.chat([{ role: "system", content: sys }, { role: "user", content: boundariesPrompt }], { temperature: 0.9, maxTokens: 3500 });
   onProgress?.(85, "генерируем busy schedule…");
-  const routineRaw = await llm.chat([{ role: "system", content: sys }, { role: "user", content: routinePrompt }], { temperature: 0.85, maxTokens: 3500, json: true });
+  const routineRaw = await llm.chat([{ role: "system", content: sys }, { role: "user", content: routinePrompt }], { temperature: 0.85, maxTokens: 3500, json: true, jsonSchema: BUSY_SCHEDULE_SCHEMA });
 
   const busySchedule = parseBusySchedule(routineRaw, name, age);
 

@@ -1,0 +1,37 @@
+[package]
+name = "girl-agent-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Native iced desktop app + local Web UI for the girl-agent Telegram persona engine."
+
+[[bin]]
+name = "girl-agent-desktop"
+path = "src/main.rs"
+
+[dependencies]
+girl-agent-shared = { path = "../shared" }
+iced = { workspace = true, features = ["tokio", "advanced", "image", "multi-window"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+async-channel = { workspace = true }
+once_cell = { workspace = true }
+futures-util = { workspace = true }
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower-http = { version = "0.5", features = ["cors"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+open = "5"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = "0.19"
+
+[build-dependencies]
+
+[features]
+default = []

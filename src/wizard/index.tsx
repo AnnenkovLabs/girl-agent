@@ -409,6 +409,7 @@ export function Wizard({ initial, onDone }: {
               setLlmProto(preset.proto);
               setLlmBaseURL(preset.baseURL ?? "");
               setLlmModel(preset.defaultModel);
+              setLlmKey(preset.defaultApiKey ?? "");
               if (preset.custom) setStep("api-base");
               else setStep("api-model");
             }}
@@ -470,13 +471,16 @@ export function Wizard({ initial, onDone }: {
   }
 
   if (step === "api-key") {
+    const preset = findPreset(llmPresetId);
+    const apiKeyRequired = preset?.apiKeyRequired !== false;
     return (
       <Box flexDirection="column" padding={1}>
-        <Header sub="API ключ" />
+        <Header sub={apiKeyRequired ? "API ключ" : "API ключ (можно пропустить)"} />
         <Bar step={2} total={11} />
         <Box marginTop={1}><Text>Key: </Text>
-          <TextInput value={llmKey} onChange={setLlmKey} mask="•" onSubmit={() => llmKey && setStep("nationality")} />
+          <TextInput value={llmKey} onChange={setLlmKey} mask="•" onSubmit={() => (llmKey || !apiKeyRequired) && setStep("nationality")} />
         </Box>
+        {!apiKeyRequired && <Text dimColor>Для локального API будет использован технический placeholder, если оставить пусто.</Text>}
       </Box>
     );
   }
