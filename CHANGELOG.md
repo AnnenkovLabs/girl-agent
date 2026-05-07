@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.9
+
+Дата: 2026-05-07
+
+- Merge pull request #48 from TheSashaDev/devin/1778156776-auto-release-workflow
+- Merge pull request #50 from TheSashaDev/devin/1778176335-fix-markdown-escape
+- fix: also switch userbot editLastMessage to HTML spoilers, remove dead escapeMarkdownV2
+- fix(telegram): replace MarkdownV2 with HTML spoilers, plain text default (#46)
+- feat(ci): auto-release workflow — hourly patch bump + changelog
+- Merge pull request #47 from TheSashaDev/devin/1778156514-docker-latest-on-master
+- fix(docker): tag latest on master pushes, not main
+- Merge pull request #45 from TheSashaDev/devin/1778149966-fix-dockerfile-build-stage
+- fix(docker): add build tools to build stage for arm64 native modules
+- Merge pull request #44 from TheSashaDev/devin/1778149678-fix-dockerfile-arm64
+- fix(docker): add build tools for native modules on alpine arm64
+- Merge pull request #43 from TheSashaDev/devin/1778149272-fix-docker-install
+- fix: docker install — fix branch ref (main→master), fallback to local on pull failure
+- Merge pull request #37 from TheSashaDev/devin/1778090781-windows-installer-webui
+- feat(server): curl|sh installer + docker image + headless server mode
+- fix(cli): fail loudly on non-TTY terminals + catch unhandled rejections
+- feat(installer/desktop): paste, ClaudeHub referral, tournament names, custom sleep, profile picker
+- fix(installer): silent crash on Windows — panic=abort + windowed subsystem hid the panic
+- fix(installer): replace empty-text widgets in progress header with Space
+- feat(installer): bundle portable Node + cli.js, full TS-wizard parity, Cyrillic fonts
+- perf: add release-fast profile, mold linker, windows_subsystem
+- Добавить ссылки на Telegram канал и сообщество
+- feat: native Windows installer + desktop app + web UI (Rust/iced)
+- Merge pull request #36 from TheSashaDev/devin/1778089384-changelog-pr35
+- docs: add PR 35 to changelog
+
 ## 0.1.8 — OpenAI-compatible API compatibility
 
 Дата: 2026-05-06
