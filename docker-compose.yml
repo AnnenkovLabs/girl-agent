@@ -1,7 +1,8 @@
+version: "3.8"
 services:
   girl-agent:
     build: .
-    container_name: girl-agent
-    restart: unless-stopped
     volumes:
       - ./data:/app/data
+    restart: always
+    init: true

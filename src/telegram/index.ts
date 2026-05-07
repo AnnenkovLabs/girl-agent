@@ -6,6 +6,7 @@ export interface IncomingMessage {
   chatId: number | string;
   messageId: number;
   isPrivate: boolean;
+  isMentioned?: boolean;
   fromName?: string;
   media?: IncomingMedia;
 }

@@ -138,6 +138,18 @@ npm install
 npm run dev
 ```
 
+**Через Docker:**
+
+При первом запуске (интерактивная настройка):
+```powershell
+docker compose run --rm -it girl-agent
+```
+
+При повторном запуске:
+```powershell
+docker compose up -d
+```
+
 ---
 
 ## Что под капотом
