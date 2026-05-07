@@ -60,6 +60,7 @@ export type StageId =
 
 export interface StagePreset {
   id: StageId;
+  num: number;
   label: string;
   description: string;
   /** behavioural defaults baked into prompt */

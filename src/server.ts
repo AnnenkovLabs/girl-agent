@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { findPreset } from "./presets/llm.js";
+import { findStage } from "./presets/stages.js";
 import { COMMUNICATION_PRESETS } from "./presets/communication.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
@@ -62,7 +63,7 @@ env-vars (для CI / docker secrets / k8s):
   GIRL_AGENT_TOKEN          telegram bot token
   GIRL_AGENT_API_PRESET     openai|anthropic|claudehub|...
   GIRL_AGENT_API_KEY        ключ от провайдера
-  GIRL_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE, _COMM_PRESET
+  GIRL_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET
   GIRL_AGENT_PROXY          socks5://host:port или mtproxy://host:port:secret
   GIRL_AGENT_NO_WSS=1       отключить WSS (по умолчанию включён)
 
@@ -206,7 +207,7 @@ function configFromEnv(): ProfileConfig | null {
   const name = e.GIRL_AGENT_NAME || pickRandomNames(nationality, 1)[0]!;
   const age = Number(e.GIRL_AGENT_AGE ?? 18);
   const tz = e.GIRL_AGENT_TZ ? (parseTzFlag(e.GIRL_AGENT_TZ) ?? defaultTzForNationality(nationality)) : defaultTzForNationality(nationality);
-  const stage = (e.GIRL_AGENT_STAGE as StageId) || "tg-given-cold";
+  const stage = e.GIRL_AGENT_STAGE ? findStage(e.GIRL_AGENT_STAGE).id : "tg-given-cold";
   const commPreset = COMMUNICATION_PRESETS.find((c) => c.id === (e.GIRL_AGENT_COMM_PRESET ?? "normal")) ?? COMMUNICATION_PRESETS[0]!;
 
   return {

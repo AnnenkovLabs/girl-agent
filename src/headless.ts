@@ -95,7 +95,7 @@ export async function runHeadlessJsonEvents(rt: Runtime): Promise<void> {
             t: Date.now(),
             paused,
             profile: profileSummary(rt.cfg),
-            stage: { id: r.stage, label: findStage(r.stage as ProfileConfig["stage"]).label },
+            stage: { id: r.stage, num: findStage(r.stage as ProfileConfig["stage"]).num, label: findStage(r.stage as ProfileConfig["stage"]).label },
             score: r.score
           });
           return;
@@ -139,6 +139,6 @@ function profileSummary(cfg: ProfileConfig) {
     mode: cfg.mode,
     nationality: cfg.nationality,
     tz: cfg.tz,
-    stage: { id: cfg.stage, label: stage.label }
+    stage: { id: cfg.stage, num: stage.num, label: stage.label }
   };
 }

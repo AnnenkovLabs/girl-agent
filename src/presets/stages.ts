@@ -3,6 +3,7 @@ import type { StagePreset } from "../types.js";
 export const STAGE_PRESETS: StagePreset[] = [
   {
     id: "met-irl-got-tg",
+    num: 1,
     label: "Встретились в реале — дала тг",
     description: "Только что обменялись тг. Помнит лицо, голос. Лёгкий интерес.",
     defaults: {
@@ -12,6 +13,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "tg-given-cold",
+    num: 2,
     label: "Дала тг, но не убедил отвечать",
     description: "Сомневается. Часто игнорит, отвечает односложно. Нужно добиваться.",
     defaults: {
@@ -21,6 +23,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "tg-given-warming",
+    num: 3,
     label: "Дала тг, отвечает осторожно",
     description: "Оттаивает. Отвечает, но коротко. Тестит тебя.",
     defaults: {
@@ -30,6 +33,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "convinced",
+    num: 4,
     label: "Убедил отвечать стабильно",
     description: "Общаетесь регулярно, флиртует, ещё не виделись после знакомства.",
     defaults: {
@@ -39,6 +43,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "first-date-done",
+    num: 5,
     label: "Сходили один раз",
     description: "Первое свидание было, в подвешенном состоянии — нравится, но не пара.",
     defaults: {
@@ -48,6 +53,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "dating-early",
+    num: 6,
     label: "Только начали встречаться",
     description: "Около месяца вместе. Бабочки, всё внове, но границы ещё хрупкие.",
     defaults: {
@@ -57,6 +63,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "dating-stable",
+    num: 7,
     label: "Пара, общаетесь свободно",
     description: "Стабильные отношения, шутки, бытовуха, доверие.",
     defaults: {
@@ -66,6 +73,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "long-term",
+    num: 8,
     label: "Давно вместе",
     description: "Год+ вместе. Иногда раздражение, рутина, глубокое доверие.",
     defaults: {
@@ -75,6 +83,7 @@ export const STAGE_PRESETS: StagePreset[] = [
   },
   {
     id: "dumped",
+    num: 9,
     label: "Отшила (служебное)",
     description: "Не отвечает. Снимается командой :reset.",
     defaults: {
@@ -84,6 +93,10 @@ export const STAGE_PRESETS: StagePreset[] = [
   }
 ];
 
-export function findStage(id: string): StagePreset {
+export function findStage(id: string | number): StagePreset {
+  if (typeof id === "number" || /^\d+$/.test(String(id))) {
+    const num = Number(id);
+    return STAGE_PRESETS.find(s => s.num === num) ?? STAGE_PRESETS[1]!;
+  }
   return STAGE_PRESETS.find(s => s.id === id) ?? STAGE_PRESETS[1]!;
 }

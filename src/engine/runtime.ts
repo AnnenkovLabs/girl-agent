@@ -781,10 +781,11 @@ export class Runtime extends EventEmitter {
 
   async cmdSetStage(stageId: string): Promise<string> {
     const prev = this.cfg.stage;
-    this.cfg.stage = stageId as StageId;
+    const resolved = findStage(stageId);
+    this.cfg.stage = resolved.id;
     await writeConfig(this.cfg);
-    await maybeAdvanceRelationshipTimeline(this.cfg, prev, stageId);
-    return `стадия установлена: ${stageId}`;
+    await maybeAdvanceRelationshipTimeline(this.cfg, prev, resolved.id);
+    return `стадия установлена: ${resolved.num}=${resolved.id}`;
   }
 
   async cmdWake(chatId?: string): Promise<string> {
