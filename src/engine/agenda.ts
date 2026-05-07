@@ -268,6 +268,7 @@ export async function extractAgendaUpdates(
     return { created: 0, updated: 0, cancelled: 0 };
   }
 
+  const agendaMap = new Map(agenda.map(item => [item.id, item]));
   let created = 0, updated = 0, cancelled = 0;
   for (const a of actions) {
     if (a.action === "noop" || !a.action) continue;
@@ -286,23 +287,24 @@ export async function extractAgendaUpdates(
         history: [`created from his message at ${new Date().toISOString()}`]
       };
       agenda.push(item);
+      agendaMap.set(item.id, item);
       created++;
     } else if (a.action === "update" && a.id) {
-      const idx = agenda.findIndex(x => x.id === a.id);
-      if (idx >= 0) {
-        if (a.about) agenda[idx]!.about = a.about;
-        if (a.pingAt) agenda[idx]!.pingAt = a.pingAt;
-        if (a.reason) agenda[idx]!.reason = a.reason;
-        if (a.userEventTime) agenda[idx]!.userEventTime = a.userEventTime;
-        if (a.importance) agenda[idx]!.importance = a.importance;
-        agenda[idx]!.history = [...(agenda[idx]!.history ?? []), `updated at ${new Date().toISOString()}: ${a.reason ?? ""}`];
+      const item = agendaMap.get(a.id);
+      if (item) {
+        if (a.about) item.about = a.about;
+        if (a.pingAt) item.pingAt = a.pingAt;
+        if (a.reason) item.reason = a.reason;
+        if (a.userEventTime) item.userEventTime = a.userEventTime;
+        if (a.importance) item.importance = a.importance;
+        item.history = [...(item.history ?? []), `updated at ${new Date().toISOString()}: ${a.reason ?? ""}`];
         updated++;
       }
     } else if (a.action === "cancel" && a.id) {
-      const idx = agenda.findIndex(x => x.id === a.id);
-      if (idx >= 0) {
-        agenda[idx]!.state = "cancelled";
-        agenda[idx]!.history = [...(agenda[idx]!.history ?? []), `cancelled at ${new Date().toISOString()}: ${a.reason ?? ""}`];
+      const item = agendaMap.get(a.id);
+      if (item) {
+        item.state = "cancelled";
+        item.history = [...(item.history ?? []), `cancelled at ${new Date().toISOString()}: ${a.reason ?? ""}`];
         cancelled++;
       }
     }
@@ -413,18 +415,15 @@ export async function reconcileAgendaAfterConflict(
   const now = Date.now();
 
   for (const item of pending) {
-    const idx = agenda.findIndex(x => x.id === item.id);
-    if (idx < 0) continue;
-
     if (conflict.level >= 3 || item.importance === 1) {
-      agenda[idx]!.state = "cancelled";
-      agenda[idx]!.history = [...(agenda[idx]!.history ?? []), `cancelled due to conflict level ${conflict.level} at ${new Date().toISOString()}`];
+      item.state = "cancelled";
+      item.history = [...(item.history ?? []), `cancelled due to conflict level ${conflict.level} at ${new Date().toISOString()}`];
       cancelled++;
     } else if (conflict.level >= 2 && item.importance === 2) {
       const delayHours = 12 + Math.random() * 24;
       const newPing = new Date(now + delayHours * 3600_000).toISOString();
-      agenda[idx]!.pingAt = newPing;
-      agenda[idx]!.history = [...(agenda[idx]!.history ?? []), `rescheduled due to conflict level ${conflict.level} at ${new Date().toISOString()}`];
+      item.pingAt = newPing;
+      item.history = [...(item.history ?? []), `rescheduled due to conflict level ${conflict.level} at ${new Date().toISOString()}`];
       rescheduled++;
     }
   }
