@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.10
+
+Дата: 2026-05-07
+
+- Merge pull request #51 from TheSashaDev/devin/1778179420-proxy-wss-support
+- refactor: remove proxy support, WSS enabled by default
+- feat: add numeric identifiers to stages for convenience
+- feat: add proxy/WSS support for Telegram (fixes #38, #32)
+
 ## 0.1.9
 
 Дата: 2026-05-07
