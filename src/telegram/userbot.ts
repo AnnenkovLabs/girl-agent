@@ -175,6 +175,16 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
       const peer = await resolvePeer(chatId);
       await client.deleteMessages(peer, messageIds, { revoke });
     },
+    getSelf() {
+      if (!me) return {};
+      const parts: string[] = [];
+      if (me.firstName) parts.push(me.firstName);
+      if (me.lastName) parts.push(me.lastName);
+      return {
+        username: me.username ?? undefined,
+        displayName: parts.join(" ") || undefined
+      };
+    },
     async stop() {
       await client.disconnect();
     }

@@ -7,6 +7,7 @@ export function makeBotAdapter(cfg: ProfileConfig): TgAdapter {
   const token = cfg.telegram.botToken;
   if (!token) throw new Error("BOT_TOKEN missing");
   const bot = new Bot(token);
+  let selfInfo: { username?: string; displayName?: string } = {};
 
   return {
     async start(onMessage) {
@@ -26,6 +27,13 @@ export function makeBotAdapter(cfg: ProfileConfig): TgAdapter {
         await onMessage(msg);
       });
       bot.start({ drop_pending_updates: true }).catch(() => {});
+      try {
+        const me = await bot.api.getMe();
+        selfInfo = {
+          username: me.username ?? undefined,
+          displayName: [me.first_name, me.last_name].filter(Boolean).join(" ") || undefined
+        };
+      } catch { /* ignore */ }
     },
     async sendText(chatId, text) {
       if (hasSpoilers(text)) {
@@ -51,6 +59,9 @@ export function makeBotAdapter(cfg: ProfileConfig): TgAdapter {
     },
     async sendSticker(chatId, fileId) {
       await bot.api.sendSticker(chatId as number, fileId);
+    },
+    getSelf() {
+      return selfInfo;
     },
     async stop() {
       await bot.stop();
