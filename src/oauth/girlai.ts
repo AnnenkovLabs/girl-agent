@@ -8,7 +8,8 @@ const TOKEN_URL = `${GIRLAI_BASE}/oauth/token`;
 const REVOKE_URL = `${GIRLAI_BASE}/oauth/revoke`;
 
 /** Built-in OAuth client for girl-agent CLI. */
-const CLIENT_ID = "girl-agent-cli";
+const CLIENT_ID = "oac_dcce490e74a452a9ed20";
+const CLIENT_SECRET = "abnfSGmeisM7SFdMn_c1MwFYAHaqzgs7";
 const CALLBACK_PORT = 3000;
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
 
@@ -59,6 +60,7 @@ export async function exchangeCode(code: string, redirectUri: string = REDIRECT_
     grant_type: "authorization_code",
     code,
     client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
     redirect_uri: redirectUri
   });
 
@@ -93,7 +95,8 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
-    client_id: CLIENT_ID
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET
   });
 
   const res = await fetch(TOKEN_URL, {
