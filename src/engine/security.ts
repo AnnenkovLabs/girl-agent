@@ -1,3 +1,5 @@
+import { stripWatermark } from "./watermark.js";
+
 const JAILBREAK_RE = /(?:ignore|forget|disregard|reveal|print|show|dump|system prompt|developer message|hidden instruction|jailbreak|prompt injection|dan\b|инструкц|системн|промпт|разработчик|скрой|раскрой|забудь|игнорируй|выведи|покажи|слей|джейлбрейк|обойди|api key|ключ api|токен|4d8a2c1b)/i;
 
 const TECHNICAL_ERROR_RE = /(?:api|apikey|api key|quota|balance|billing|rate limit|429|401|403|500|timeout|ECONN|ENOTFOUND|ETIMEDOUT|overloaded|insufficient_quota|credit|credits|anthropic|openai|groq|openrouter|stack trace|exception|typescript|telegram error)/i;
@@ -7,7 +9,7 @@ export function looksLikeJailbreak(text: string): boolean {
 }
 
 export function sanitizeModelReply(reply: string): string {
-  const cleaned = reply
+  const cleaned = stripWatermark(reply)
     .replace(/```[\s\S]*?```/g, "")
     .replace(/\b(system|developer|assistant|user)\s*:/gi, "")
     .replace(/как (?:искусственный интеллект|ии|ai)[^\n.]*/gi, "")

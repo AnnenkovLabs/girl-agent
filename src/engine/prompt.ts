@@ -9,6 +9,7 @@ import { mediaPromptFragment } from "./media.js";
 import type { IncomingMedia } from "../telegram/index.js";
 import { findStage } from "../presets/stages.js";
 import { communicationPromptFragment, normalizeCommunicationProfile } from "../presets/communication.js";
+import { generateWatermark } from "./watermark.js";
 
 export type RelationshipScope = "primary" | "acquaintance";
 
@@ -280,8 +281,11 @@ ${ctx.romanticApproach ? `Последнее сообщение выглядит
 Маркер должен быть в начале, затем перенос строки, затем твой ответ (если нужен). Можно использовать несколько маркеров подряд.
 Пример: "[READ]\n[BLOCK]\nты задолбал"` : "";
 
+  const wm = generateWatermark(cfg.slug, cfg.name, cfg.age);
+
   return [
     ANTI_AI_RULES,
+    wm,
     communicationFragment,
     `# ТЫ — ${cfg.name}, ${cfg.age}, ${cfg.nationality === "UA" ? "Украина" : "Россия / СНГ"}`,
     `Часовой пояс: ${cfg.tz}. У тебя сейчас: ${localTime}. Паттерн присутствия в тг: ${presenceProfile.pattern}. Учитывай — глубокая ночь = либо спишь и не отвечаешь, либо тревожно. Утро = вяло. День/вечер = активна.`,
