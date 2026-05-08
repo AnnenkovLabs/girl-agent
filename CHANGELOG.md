@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.13
+
+Дата: 2026-05-08
+
+- Merge pull request #56 from TheSashaDev/devin/1778220196-data-migration-system
+- feat: GirlAI OAuth login and token refresh support
+- feat: add GirlAI API preset and recommended status for LLM providers
+- feat: extend migration system with LLM support and auto-run on startup
+- fix: robust version lookup for bundled output, fix AGENTS.md auto-run claim
+- fix: remove unused import, dynamic version from package.json, use static listProfiles
+- feat: AGENTS.md + update command with migration system
+
 ## 0.1.12
 
 Дата: 2026-05-08
