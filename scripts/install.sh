@@ -155,11 +155,15 @@ SHIM
 # -------- mode: termux --------
 install_termux() {
   say "обновляю пакеты termux и ставлю nodejs..."
-  pkg update -y && pkg install -y nodejs
+  if command -v pkg >/dev/null 2>&1; then
+    pkg update -y && pkg install -y nodejs
+  else
+    warn "команда pkg не найдена, пропускаю установку nodejs"
+  fi
 
-  NODE="$(command -v node)"
-  NPM="$(command -v npm)"
-  [ -x "$NODE" ] || die "node не установился через pkg"
+  NODE="$(command -v node || echo "")"
+  NPM="$(command -v npm || echo "")"
+  [ -x "$NODE" ] || die "node не установился через pkg или не найден в PATH"
 
   say "ставлю @thesashadev/girl-agent@${PKG_VERSION} в ${PREFIX}/lib..."
   mkdir -p "$PREFIX/lib"
