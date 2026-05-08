@@ -61,6 +61,7 @@ export class Runtime extends EventEmitter {
   private pendingReplySeq = new Map<string, number>();
   private pendingReplyIncoming = new Map<string, IncomingMessage>();
   private incomingSeq = new Map<string, number>();
+  private tgSelf: { username?: string; displayName?: string } = {};
 
   constructor(public cfg: ProfileConfig) {
     super();
@@ -74,6 +75,7 @@ export class Runtime extends EventEmitter {
     this.emit("event", { type: "info", text: `MCP started: ${this.mcps.map(m => m.id).join(", ") || "none"}` } as RuntimeEvent);
     this.tg = await makeTgAdapter(this.cfg);
     await this.tg.start((m) => this.handleIncoming(m));
+    if (this.tg.getSelf) this.tgSelf = this.tg.getSelf();
     this.emit("event", { type: "info", text: `Telegram ${this.cfg.mode} запущен. Профиль: ${this.cfg.slug} | presence: ${this.presenceProfile.pattern} | communication: ${communicationProfileLabel(normalizeCommunicationProfile(this.cfg))}` } as RuntimeEvent);
     this.lastStage = this.cfg.stage;
 
@@ -290,7 +292,9 @@ export class Runtime extends EventEmitter {
       incoming: incomingText,
       relationshipScope: scope,
       committedPrimary: this.primaryIsCommitted(),
-      realism
+      realism,
+      tgUsername: this.tgSelf.username,
+      tgDisplayName: this.tgSelf.displayName
     });
     const reply = sanitizeModelReply(await this.llm.chat([
       {
@@ -310,7 +314,9 @@ export class Runtime extends EventEmitter {
       incoming: incomingText,
       relationshipScope: scope,
       committedPrimary: this.primaryIsCommitted(),
-      realism
+      realism,
+      tgUsername: this.tgSelf.username,
+      tgDisplayName: this.tgSelf.displayName
     });
     const label = kind === "photo" ? "фото/селфи"
       : kind === "video" ? "видео"
@@ -587,7 +593,9 @@ export class Runtime extends EventEmitter {
       committedPrimary: this.primaryIsCommitted(),
       romanticApproach,
       realism,
-      media: incoming?.media
+      media: incoming?.media,
+      tgUsername: this.tgSelf.username,
+      tgDisplayName: this.tgSelf.displayName
     });
     const scopeHint = scope === "acquaintance"
       ? "\nЭто сторонний личный чат, не основной парень. Не используй память/отношения основного парня. Если заход романтический — поставь границу. Если вопрос обычный — ответь по легенде коротко."
@@ -719,25 +727,35 @@ export class Runtime extends EventEmitter {
   private async composeProactiveMessage(item: { about: string; reason: string; importance: 1 | 2 | 3; attempts: number }, hist: ConversationTurn[]): Promise<string> {
     const conflict = await readConflict(this.cfg.slug);
     const realism = await loadRealismContext(this.cfg, item.about);
-    const sys = await buildSystemPrompt(this.cfg, { dailyLife: this.dailyLife, conflict, realism });
+    const sys = await buildSystemPrompt(this.cfg, { dailyLife: this.dailyLife, conflict, realism, tgUsername: this.tgSelf.username, tgDisplayName: this.tgSelf.displayName });
+
+    // Собираем краткую выжимку из истории для подсказки
+    const lastMessages = hist.slice(-10);
+    const herLastMessages = lastMessages.filter(t => t.role === "assistant").map(t => t.content);
+    const alreadySaidHint = herLastMessages.length
+      ? `\n\nПоследние ТВОИ (уже отправленные) сообщения в этом чате:\n${herLastMessages.map(m => `- "${m}"`).join("\n")}\nНЕ ПОВТОРЯЙ то что ты уже писала. Если ты уже здоровалась — НЕ здоровайся снова. Если ты уже ответила — не дублируй свой ответ.`
+      : "";
+
     const proactiveHint = `\n\n# ПРОАКТИВНОЕ СООБЩЕНИЕ
 Ты сейчас сама пишешь ему первая. Не он тебе. Контекст:
-- Что у НЕГО за событие/тема: "${item.about}"
+- Тема/повод: "${item.about}"
 - Почему ты пишешь: "${item.reason}"
 - Важность для тебя: ${item.importance}/3
 - Попытка №${item.attempts + 1}
 
 ВАЖНО:
-- Не пиши "привет, как дела" сухо. Пиши как живой человек, ВСПОМНИВ контекст.
+- Не пиши "привет, как дела" сухо. Пиши как живой человек.
 - Если важность 1 — короткое любопытство ("ну как там")
 - Если 2 — нормальный интерес ("ну как, прошло уже?")
 - Если 3 — реально переживаешь, можно 2-3 пузыря, эмоционально.
 - НЕ упоминай что "помнила" или "записала" — просто пишешь как обычная девушка.
-- Если это уже не первая попытка — учти это (мб обиженно "ну ты и не пишешь" или мягко повтори).`;
+- Если это уже не первая попытка — учти это (мб обиженно "ну ты и не пишешь" или мягко повтори).
+- КРИТИЧНО: используй ТОЛЬКО темы которые РЕАЛЬНО обсуждались в переписке или записаны в long-term memory. НЕ ПРИДУМЫВАЙ факты и события которых не было. Если тема "${item.about}" НЕ упоминается в истории переписки и не в long-term memory — НЕ ссылайся на неё как на общую тему, а напиши от себя как свою новость/мысль.
+- КРИТИЧНО: посмотри на историю переписки. Если ты УЖЕ здоровалась или отвечала — НЕ начинай снова с "привет". Продолжай разговор естественно.${alreadySaidHint}`;
     const messages = [
       { role: "system" as const, content: sys + proactiveHint },
       ...hist.slice(-20).map(t => ({ role: t.role, content: t.content })),
-      { role: "user" as const, content: "[system: пора писать ему первой по теме выше. Сформулируй её сообщение.]" }
+      { role: "user" as const, content: "[system: пора писать ему первой по теме выше. Сформулируй её сообщение. Не повторяй то что уже говорила.]" }
     ];
     const reply = sanitizeModelReply(await this.llm.chat(messages, { temperature: 0.95, maxTokens: 3500 }));
     return reply.trim();

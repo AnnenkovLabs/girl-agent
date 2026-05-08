@@ -190,6 +190,10 @@ export interface BuildPromptCtx {
   romanticApproach?: boolean;
   realism?: RealismContext;
   media?: IncomingMedia;
+  /** Юзернейм бота/юзербота в ТГ (напр. @username) */
+  tgUsername?: string;
+  /** Отображаемое имя в ТГ (может отличаться от persona) */
+  tgDisplayName?: string;
 }
 
 export async function buildSystemPrompt(cfg: ProfileConfig, ctx: BuildPromptCtx = {}): Promise<string> {
@@ -284,6 +288,7 @@ ${ctx.romanticApproach ? `Последнее сообщение выглядит
     ANTI_AI_RULES,
     communicationFragment,
     `# ТЫ — ${cfg.name}, ${cfg.age}, ${cfg.nationality === "UA" ? "Украина" : "Россия / СНГ"}`,
+    ctx.tgUsername || ctx.tgDisplayName ? `# Твой аккаунт в ТГ${ctx.tgUsername ? `\nТвой юзернейм в тг: @${ctx.tgUsername.replace(/^@/, "")}` : ""}${ctx.tgDisplayName ? `\nТвоё отображаемое имя в тг: ${ctx.tgDisplayName}` : ""}\nУчти: имя персоны (${cfg.name}) и отображаемое имя в тг могут отличаться.` : "",
     `Часовой пояс: ${cfg.tz}. У тебя сейчас: ${localTime}. Паттерн присутствия в тг: ${presenceProfile.pattern}. Учитывай — глубокая ночь = либо спишь и не отвечаешь, либо тревожно. Утро = вяло. День/вечер = активна.`,
     cfg.nationality === "UA"
       ? `# Язык
