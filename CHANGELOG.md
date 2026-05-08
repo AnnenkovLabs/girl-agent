@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.16
+
+Дата: 2026-05-08
+
+- Merge pull request #63 from TheSashaDev/devin/1778244236-serialize-llm-requests
+- Serialize LLM provider requests
+
 ## 0.1.15
 
 Дата: 2026-05-08
