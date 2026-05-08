@@ -37,7 +37,7 @@
 
 ## Быстрый старт
 
-### linux / macos / wsl — одной командой (без node на машине)
+### linux / macos / wsl / termux — одной командой (без node на машине)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/master/scripts/install.sh | sh
@@ -45,6 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/master/scrip
 
 Что произойдёт:
 - определит OS + arch (linux x64/arm64, macos x64/arm64, wsl)
+- если запущен в **Termux** (Android) → установит Node.js через встроенный `pkg` и настроит пакет локально.
 - если есть docker → поставит docker-обёртку (полная изоляция от системы)
 - иначе → скачает [official Node.js 22 LTS](https://nodejs.org) в `~/.local/share/girl-agent/runtime/` и поставит туда же `@thesashadev/girl-agent` (system node не трогается)
 - shim-скрипт `girl-agent` положит в `~/.local/bin/girl-agent`
