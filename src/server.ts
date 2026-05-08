@@ -11,6 +11,7 @@ import { Runtime } from "./engine/runtime.js";
 import { makeLLM } from "./llm/index.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { runHeadlessJsonEvents } from "./headless.js";
+import { checkForPendingMigrations, runMigrations, formatUpdateWarnings } from "./migrations/index.js";
 import type { ProfileConfig, ClientMode, Nationality, StageId, LLMProto, PrivacyMode } from "./types.js";
 
 /**
@@ -161,6 +162,17 @@ async function persistAndMaybeStart(cfg: ProfileConfig, args: ServerArgs): Promi
 }
 
 async function startRuntime(cfg: ProfileConfig, args: ServerArgs): Promise<void> {
+  if (await checkForPendingMigrations()) {
+    process.stderr.write("[updater] обнаружены pending-миграции, запуск...\n");
+    const result = await runMigrations({
+      verbose: true,
+      llmFactory: (c) => { try { return makeLLM(c.llm); } catch { return undefined; } }
+    });
+    if (result.warnings.length) {
+      process.stderr.write(formatUpdateWarnings(result.warnings) + "\n");
+    }
+  }
+
   const rt = new Runtime(cfg);
   await rt.start();
 

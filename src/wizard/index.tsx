@@ -17,12 +17,13 @@ import { userbotLogin } from "../telegram/userbot.js";
 import { remoteSendCode, remoteVerifyCode, remoteVerifyPassword, isNeeds2FA } from "../telegram/remote-auth.js";
 import { pickRandomNames } from "../data/names.js";
 import { findTzByQuery, defaultTzForNationality } from "../data/timezones.js";
+import { runOAuthFlow } from "../oauth/girlai.js";
 
 export interface WizardResult { config: ProfileConfig; }
 
 type Step =
   | "splash" | "mode" | "tg-bot-token" | "tg-userbot-source" | "tg-userbot-api" | "tg-userbot-phone" | "tg-userbot-code" | "tg-userbot-pass"
-  | "api-preset" | "api-base" | "api-model" | "api-model-custom" | "api-key"
+  | "api-preset" | "api-auth-method" | "api-oauth" | "api-base" | "api-model" | "api-model-custom" | "api-key"
   | "nationality" | "name-mode" | "name" | "name-tournament" | "name-tournament-knockout"
   | "age" | "sleep" | "sleep-custom-from" | "sleep-custom-to" | "sleep-custom-chance" | "vibe"
   | "comm-notifications" | "comm-style" | "comm-initiative" | "comm-life"
@@ -76,6 +77,9 @@ export function Wizard({ initial, onDone }: {
   const [llmBaseURL, setLlmBaseURL] = useState(initial?.llm?.baseURL ?? "");
   const [llmModel, setLlmModel] = useState(initial?.llm?.model ?? "");
   const [llmKey, setLlmKey] = useState(initial?.llm?.apiKey ?? "");
+  const [oauthRefreshToken, setOauthRefreshToken] = useState(initial?.llm?.oauthRefreshToken ?? "");
+  const [oauthExpiresAt, setOauthExpiresAt] = useState(initial?.llm?.oauthExpiresAt ?? 0);
+  const [oauthStatus, setOauthStatus] = useState("");
 
   const [nationality, setNationality] = useState<Nationality>(initial?.nationality ?? "RU");
   const [name, setName] = useState(initial?.name ?? "");
@@ -400,7 +404,7 @@ export function Wizard({ initial, onDone }: {
         <Box marginTop={1} flexDirection="column">
           <SelectInput
             limit={10}
-            items={LLM_PRESETS.map(p => ({ label: `${p.name}${p.hint ? `  · ${p.hint}` : ""}`, value: p.id }))}
+            items={LLM_PRESETS.map(p => ({ label: `${p.name}${p.recommended ? " ★" : ""}${p.hint ? `  · ${p.hint}` : ""}`, value: p.id }))}
             onSelect={(it) => {
               const preset = findPreset(it.value as string)!;
               setLlmPresetId(preset.id);
@@ -409,10 +413,62 @@ export function Wizard({ initial, onDone }: {
               setLlmModel(preset.defaultModel);
               setLlmKey(preset.defaultApiKey ?? "");
               if (preset.custom) setStep("api-base");
+              else if (preset.oauth) setStep("api-auth-method");
               else setStep("api-model");
             }}
           />
         </Box>
+      </Box>
+    );
+  }
+
+  if (step === "api-auth-method") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Header sub="способ авторизации (GirlAI)" />
+        <Bar step={2} total={9} />
+        <Box marginTop={1} flexDirection="column">
+          <SelectInput
+            items={[
+              { label: "🔑 Войти через GirlAI аккаунт (OAuth)", value: "oauth" },
+              { label: "📋 Ввести API ключ вручную", value: "apikey" }
+            ]}
+            onSelect={(it) => {
+              if (it.value === "oauth") {
+                setOauthStatus("открываю браузер для авторизации...");
+                setStep("api-oauth");
+                runOAuthFlow((msg) => setOauthStatus(msg))
+                  .then((tokens) => {
+                    setLlmKey(tokens.accessToken);
+                    setOauthRefreshToken(tokens.refreshToken);
+                    setOauthExpiresAt(tokens.expiresAt);
+                    setStep("api-model");
+                  })
+                  .catch((err) => {
+                    setError((err as Error).message);
+                    setStep("api-auth-method");
+                  });
+              } else {
+                setStep("api-model");
+              }
+            }}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
+  if (step === "api-oauth") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Header sub="авторизация GirlAI" />
+        <Bar step={2} total={9} />
+        <Box marginTop={1}>
+          <Spinner type="dots" />
+          <Text> {oauthStatus || "ожидаю авторизацию в браузере..."}</Text>
+        </Box>
+        {error && <Text color="red">{error}</Text>}
+        <Text dimColor>войди в аккаунт в открывшемся браузере и разреши доступ</Text>
       </Box>
     );
   }
@@ -1090,7 +1146,10 @@ export function Wizard({ initial, onDone }: {
       tz: tz || defaultTzForNationality(nationality),
       mode,
       stage: overrides.stage ?? stage,
-      llm: { presetId: llmPresetId, proto: llmProto, baseURL: llmBaseURL, apiKey: llmKey, model: llmModel },
+      llm: {
+        presetId: llmPresetId, proto: llmProto, baseURL: llmBaseURL, apiKey: llmKey, model: llmModel,
+        ...(oauthRefreshToken ? { oauthRefreshToken, oauthExpiresAt } : {})
+      },
       telegram: mode === "bot"
         ? { botToken }
         : { apiId: Number(apiId), apiHash, phone, sessionString },

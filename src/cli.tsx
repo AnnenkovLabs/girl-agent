@@ -15,6 +15,7 @@ import { runServer } from "./server.js";
 import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "./presets/communication.js";
 import { findStage } from "./presets/stages.js";
 import type { ProfileConfig, ClientMode, StageId, LLMProto, Nationality, CommunicationProfile, PrivacyMode } from "./types.js";
+import { runMigrations, checkForPendingMigrations, formatUpdateWarnings } from "./migrations/index.js";
 
 const HELP = `
 girl-agent — AI girl for Telegram
@@ -39,11 +40,11 @@ required flags для headless setup (--name --age --stage --api-preset --mode; 
   --mode=bot|userbot
   --token=<bot_token>         для bot
   --api-id=<n> --api-hash=<h> --phone=<+7…>     для userbot
-  --api-preset=<id>           openai|anthropic|openrouter|groq|deepseek|...
+  --api-preset=<id>           girlai|claudehub (рекомендуемые) | openai|anthropic|openrouter|groq|deepseek|...
   --base-url=<url>            для custom
   --proto=openai|anthropic    для custom
   --model=<model>
-  --api-key=<key>             не нужен для локальных LM Studio/Ollama
+  --api-key=<key>             не нужен для локальных LM Studio/Ollama; для GirlAI можно вместо ключа использовать OAuth (только в TUI визарде)
   --name=<имя>                конкретное имя; если пропустить — случайное из пула по nationality (турнир выбора имён доступен ТОЛЬКО в TUI визарде)
   --age=<n>
   --persona-notes=<text>      доп. пожелания к persona/speech/communication перед генерацией
@@ -61,6 +62,10 @@ required flags для headless setup (--name --age --stage --api-preset --mode; 
   --list                      показать профили
   --help
 
+update:
+  npx girl-agent update                # обновить данные (миграции) до текущей версии
+  npx girl-agent update --verbose      # с подробным выводом
+
 команды в работающем дашборде: :status :reset :stage <id|num> :pause :resume :cringe :persona :log :quit
 `;
 
@@ -73,7 +78,7 @@ async function main() {
     ],
     boolean: [
       "help", "list", "reset", "new", "json-events", "headless", "server",
-      "print-config", "print-systemd", "print-docker", "no-start"
+      "print-config", "print-systemd", "print-docker", "no-start", "verbose"
     ],
     alias: { h: "help" }
   });
@@ -88,13 +93,18 @@ async function main() {
     return;
   }
 
+  if (positional[0] === "update") {
+    await runUpdate(!!argv.verbose);
+    return;
+  }
+
   if (argv.help) { process.stdout.write(HELP); return; }
 
   // --- Sanity: TTY/raw-mode detection so terminals that can't render the
   // wizard fail loudly instead of exiting silently after npm warnings.
   // We only require a TTY when we know we'll need to draw the ink wizard or
   // the live dashboard. Headless / --json-events / --list don't need it.
-  const isHeadless = !!(argv["json-events"] || argv.headless || argv.list || argv.help);
+  const isHeadless = !!(argv["json-events"] || argv.headless || argv.list || argv.help || positional[0] === "update");
   if (!isHeadless) {
     const stdin = process.stdin as NodeJS.ReadStream & { isTTY?: boolean };
     const stdout = process.stdout as NodeJS.WriteStream & { isTTY?: boolean };
@@ -280,7 +290,47 @@ function personaNotesForGeneration(cfg: ProfileConfig): string {
   return parts.join("\n\n");
 }
 
+async function runUpdate(verbose: boolean) {
+  const profiles = await listProfiles();
+  if (!profiles.length) {
+    process.stdout.write("нет профилей — нечего обновлять.\n");
+    return;
+  }
+
+  process.stdout.write(`найдено профилей: ${profiles.length}\nзапуск миграций...\n`);
+  const result = await runMigrations({ verbose });
+
+  if (!result.migrationsApplied.length) {
+    process.stdout.write("все данные актуальны, миграции не нужны.\n");
+    return;
+  }
+
+  process.stdout.write(`\nготово:\n`);
+  process.stdout.write(`  миграций применено: ${result.migrationsApplied.length}\n`);
+  for (const id of result.migrationsApplied) {
+    process.stdout.write(`    - ${id}\n`);
+  }
+  process.stdout.write(`  профилей обновлено: ${result.profilesUpdated}\n`);
+  if (result.errors.length) {
+    process.stdout.write(`  ошибок: ${result.errors.length}\n`);
+    for (const e of result.errors) {
+      process.stdout.write(`    ${e.profile} @ ${e.migration}: ${e.error}\n`);
+    }
+  }
+}
+
 async function runRuntime(cfg: ProfileConfig, opts: { jsonEvents?: boolean } = {}) {
+  if (await checkForPendingMigrations()) {
+    process.stderr.write("[updater] обнаружены pending-миграции, запуск...\n");
+    const result = await runMigrations({
+      verbose: true,
+      llmFactory: (c) => { try { return makeLLM(c.llm); } catch { return undefined; } }
+    });
+    if (result.warnings.length) {
+      process.stderr.write(formatUpdateWarnings(result.warnings) + "\n");
+    }
+  }
+
   const rt = new Runtime(cfg);
   await rt.start();
   if (opts.jsonEvents) {

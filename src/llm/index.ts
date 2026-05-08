@@ -15,6 +15,7 @@ import type {
   TextBlockParam
 } from "@anthropic-ai/sdk/resources/messages";
 import type { ProfileConfig } from "../types.js";
+import { refreshAccessToken, isTokenExpired } from "../oauth/girlai.js";
 
 interface OpenAIStreamChoice {
   delta?: { content?: unknown };
@@ -72,7 +73,25 @@ class OpenAILike implements LLMClient {
       fetch: compatibleFetch
     });
   }
+
+  private async ensureFreshToken(): Promise<void> {
+    if (!this.cfg.oauthRefreshToken || !this.cfg.oauthExpiresAt) return;
+    if (!isTokenExpired(this.cfg.oauthExpiresAt)) return;
+    try {
+      const tokens = await refreshAccessToken(this.cfg.oauthRefreshToken);
+      this.cfg.apiKey = tokens.accessToken;
+      this.cfg.oauthRefreshToken = tokens.refreshToken;
+      this.cfg.oauthExpiresAt = tokens.expiresAt;
+      const key = tokens.accessToken;
+      this.client = new OpenAI({ apiKey: key, baseURL: normalizeBaseURL(this.cfg.baseURL), timeout: LLM_TIMEOUT_MS, maxRetries: LLM_MAX_RETRIES });
+      this.fetchClient = new OpenAI({ apiKey: key, baseURL: normalizeBaseURL(this.cfg.baseURL), timeout: LLM_TIMEOUT_MS, maxRetries: LLM_MAX_RETRIES, fetch: compatibleFetch });
+    } catch (err) {
+      process.stderr.write(`[oauth] token refresh failed: ${err instanceof Error ? err.message : err}\n`);
+    }
+  }
+
   async chat(messages: ChatMessage[], opts: LLMOptions = {}): Promise<string> {
+    await this.ensureFreshToken();
     const params: ChatCompletionCreateParamsNonStreaming = {
       model: this.cfg.model,
       messages: openAIMessages(messages),
