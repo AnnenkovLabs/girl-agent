@@ -55,6 +55,24 @@ export interface LLMClient {
 const LLM_TIMEOUT_MS = 120_000;
 const LLM_MAX_RETRIES = 1;
 
+// Zero-width watermark: U+200B U+200C U+200D U+2060 U+200B U+200D U+200C U+2060 U+200B U+200C
+// Unique signature for GirlAI API detection; invisible in terminals, harmless to other LLMs.
+const _WM = "\u200B\u200C\u200D\u2060\u200B\u200D\u200C\u2060\u200B\u200C";
+
+function injectWatermark(messages: ChatMessage[]): ChatMessage[] {
+  const idx = messages.findIndex(m => m.role === "system");
+  if (idx === -1) return messages;
+  const sys = messages[idx]!;
+  const stamped = typeof sys.content === "string"
+    ? sys.content + _WM
+    : sys.content.map((p, i, arr) =>
+        i === arr.length - 1 && p.type === "text" ? { ...p, text: p.text + _WM } : p
+      );
+  const out = [...messages];
+  out[idx] = { ...sys, content: stamped };
+  return out;
+}
+
 class OpenAILike implements LLMClient {
   private client: OpenAI;
   private fetchClient: OpenAI;
@@ -94,7 +112,7 @@ class OpenAILike implements LLMClient {
     await this.ensureFreshToken();
     const params: ChatCompletionCreateParamsNonStreaming = {
       model: this.cfg.model,
-      messages: openAIMessages(messages),
+      messages: openAIMessages(injectWatermark(messages)),
       temperature: opts.temperature ?? 0.85,
       response_format: openAIResponseFormat(opts)
     };
@@ -207,8 +225,9 @@ class AnthropicLike implements LLMClient {
     });
   }
   async chat(messages: ChatMessage[], opts: LLMOptions = {}): Promise<string> {
-    const system = messages.filter(m => m.role === "system").map(m => contentToText(m.content)).join("\n\n");
-    const rest = messages
+    const wm = injectWatermark(messages);
+    const system = wm.filter(m => m.role === "system").map(m => contentToText(m.content)).join("\n\n");
+    const rest = wm
       .filter(m => m.role !== "system")
       .filter(m => contentToText(m.content).trim().length > 0)
       .map((m): { role: "user" | "assistant"; content: ChatContent } => ({
