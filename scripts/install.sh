@@ -154,22 +154,43 @@ SHIM
 
 # -------- mode: termux --------
 install_termux() {
-  say "обновляю пакеты termux и ставлю nodejs..."
-  if command -v pkg >/dev/null 2>&1; then
-    pkg update -y && pkg install -y nodejs
-  else
-    warn "команда pkg не найдена, пропускаю установку nodejs"
-  fi
-
   NODE="$(command -v node || echo "")"
   NPM="$(command -v npm || echo "")"
-  [ -x "$NODE" ] || die "node не установился через pkg или не найден в PATH"
+  
+  if [ -x "$NODE" ]; then
+    say "nodejs уже установлен, пропускаю установку через pkg..."
+  else
+    say "устанавливаю nodejs через pkg..."
+    if command -v pkg >/dev/null 2>&1; then
+      # Игнорируем ошибку update (например, если зеркало недоступно), но пытаемся установить nodejs
+      pkg update -y || warn "pkg update завершился с ошибкой, продолжаю установку..."
+      pkg install -y nodejs || warn "pkg install nodejs завершился с ошибкой"
+    else
+      warn "команда pkg не найдена, не могу установить nodejs"
+    fi
+    
+    NODE="$(command -v node || echo "")"
+    NPM="$(command -v npm || echo "")"
+    
+    if [ ! -x "$NODE" ]; then
+      die "node не установился. Если проблема с репозиториями Termux, выполните 'termux-change-repo', выберите другие зеркала и запустите скрипт заново."
+    fi
+  fi
+
+  say "ставлю утилиты сборки (python, make, clang) для нативных модулей npm..."
+  if command -v pkg >/dev/null 2>&1; then
+    pkg install -y python make clang || warn "не удалось установить python/make/clang, сборка нативных модулей может упасть."
+  fi
 
   say "ставлю @thesashadev/girl-agent@${PKG_VERSION} в ${PREFIX}/lib..."
   mkdir -p "$PREFIX/lib"
-
-  "$NODE" "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --silent "@thesashadev/girl-agent@${PKG_VERSION}" \
-    || die "npm install не удался"
+  
+  if ! "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --loglevel error "@thesashadev/girl-agent@${PKG_VERSION}"; then
+    warn "Возможные причины ошибки в Termux:"
+    warn "1. Нехватка памяти (OOM) — закройте тяжелые приложения в фоне Android."
+    warn "2. Отсутствие нужных библиотек. Читайте ошибку выше (обычно node-gyp rebuild failed)."
+    die "npm install не удался. Посмотрите ошибки выше."
+  fi
 
   cat >"$BIN_DIR/girl-agent" <<EOF
 #!/usr/bin/env sh
