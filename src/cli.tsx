@@ -40,7 +40,7 @@ required flags для headless setup (--name --age --stage --api-preset --mode; 
   --mode=bot|userbot
   --token=<bot_token>         для bot
   --api-id=<n> --api-hash=<h> --phone=<+7…>     для userbot
-  --api-preset=<id>           openai|anthropic|openrouter|groq|deepseek|...
+  --api-preset=<id>           girlai|claudehub (рекомендуемые) | openai|anthropic|openrouter|groq|deepseek|...
   --base-url=<url>            для custom
   --proto=openai|anthropic    для custom
   --model=<model>

@@ -17,6 +17,7 @@ export interface LLMPreset {
   models?: string[];
   custom?: boolean;
   hint?: string;
+  recommended?: boolean;
 }
 
 export interface MCPPreset {

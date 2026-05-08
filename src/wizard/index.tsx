@@ -400,7 +400,7 @@ export function Wizard({ initial, onDone }: {
         <Box marginTop={1} flexDirection="column">
           <SelectInput
             limit={10}
-            items={LLM_PRESETS.map(p => ({ label: `${p.name}${p.hint ? `  · ${p.hint}` : ""}`, value: p.id }))}
+            items={LLM_PRESETS.map(p => ({ label: `${p.name}${p.recommended ? " ★" : ""}${p.hint ? `  · ${p.hint}` : ""}`, value: p.id }))}
             onSelect={(it) => {
               const preset = findPreset(it.value as string)!;
               setLlmPresetId(preset.id);

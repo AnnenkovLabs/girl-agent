@@ -2,6 +2,26 @@ import type { LLMPreset } from "../types.js";
 
 export const LLM_PRESETS: LLMPreset[] = [
   {
+    id: "girlai",
+    name: "GirlAI",
+    proto: "openai",
+    baseURL: "https://api.girl-agent.com/v1",
+    defaultModel: "GirlAI-test",
+    models: ["GirlAI-test"],
+    recommended: true,
+    hint: "рекомендуемый · OpenAI-compatible gateway (РФ, оплата)"
+  },
+  {
+    id: "claudehub",
+    name: "ClaudeHub",
+    proto: "anthropic",
+    baseURL: "https://api.claudehub.fun",
+    defaultModel: "claude-sonnet-4.6",
+    models: ["claude-opus-4.7", "claude-opus-4.6", "claude-opus-4.5", "claude-sonnet-4.6", "claude-sonnet-4.5", "claude-haiku-4.5", "gpt-5.5", "gpt-5.4"],
+    recommended: true,
+    hint: "рекомендуемый · ClaudeHub proxy for Anthropic & OpenAI (РФ, СБП, крипта)"
+  },
+  {
     id: "openai",
     name: "OpenAI",
     proto: "openai",
@@ -138,15 +158,6 @@ export const LLM_PRESETS: LLMPreset[] = [
     baseURL: "https://api.cerebras.ai/v1",
     defaultModel: "llama-3.3-70b",
     models: ["llama-3.3-70b", "llama-4-scout-17b-16e-instruct", "qwen-3-32b"]
-  },
-  {
-    id: "claudehub",
-    name: "ClaudeHub",
-    proto: "anthropic",
-    baseURL: "https://api.claudehub.fun",
-    defaultModel: "claude-sonnet-4.6",
-    models: ["claude-opus-4.7", "claude-opus-4.6", "claude-opus-4.5", "claude-sonnet-4.6", "claude-sonnet-4.5", "claude-haiku-4.5", "gpt-5.5", "gpt-5.4"],
-    hint: "ClaudeHub proxy for Anthropic & OpenAI (РФ, СБП, крипта)"
   },
   {
     id: "custom-openai",
