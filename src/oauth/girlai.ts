@@ -9,6 +9,8 @@ const REVOKE_URL = `${GIRLAI_BASE}/oauth/revoke`;
 
 /** Built-in OAuth client for girl-agent CLI. */
 const CLIENT_ID = "girl-agent-cli";
+const CALLBACK_PORT = 3000;
+const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
 
 export interface OAuthTokens {
   accessToken: string;
@@ -25,12 +27,11 @@ export interface OAuthTokens {
  */
 export async function runOAuthFlow(log: (msg: string) => void): Promise<OAuthTokens> {
   const state = crypto.randomBytes(16).toString("hex");
-  const { port, waitForCode, close } = await startCallbackServer(state);
-  const redirectUri = `http://localhost:${port}/callback`;
+  const { waitForCode, close } = await startCallbackServer(state);
 
   const authorizeParams = new URLSearchParams({
     client_id: CLIENT_ID,
-    redirect_uri: redirectUri,
+    redirect_uri: REDIRECT_URI,
     response_type: "code",
     state
   });
@@ -47,13 +48,13 @@ export async function runOAuthFlow(log: (msg: string) => void): Promise<OAuthTok
   }
 
   log("код получен, обмениваю на токен...");
-  return exchangeCode(code, redirectUri);
+  return exchangeCode(code, REDIRECT_URI);
 }
 
 /**
  * Exchange an authorization code for access + refresh tokens.
  */
-export async function exchangeCode(code: string, redirectUri: string): Promise<OAuthTokens> {
+export async function exchangeCode(code: string, redirectUri: string = REDIRECT_URI): Promise<OAuthTokens> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
@@ -140,7 +141,6 @@ export function isTokenExpired(expiresAt: number): boolean {
 // ── internals ──
 
 function startCallbackServer(expectedState: string): Promise<{
-  port: number;
   waitForCode: Promise<string>;
   close: () => void;
 }> {
@@ -189,11 +189,8 @@ function startCallbackServer(expectedState: string): Promise<{
       resolveCode(code);
     });
 
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
+    server.listen(CALLBACK_PORT, "127.0.0.1", () => {
       resolveSetup({
-        port,
         waitForCode,
         close: () => server.close()
       });
