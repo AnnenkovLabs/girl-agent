@@ -49,6 +49,7 @@ export async function runHeadlessJsonEvents(rt: Runtime): Promise<void> {
       let text = "";
       switch (head) {
         case "status": text = await rt.cmdStatus(); break;
+        case "model": text = await rt.cmdModel(rest); break;
         case "reset": text = await rt.cmdReset(); break;
         case "stage": text = await rt.cmdSetStage(rest.join(" ")); break;
         case "wake": text = await rt.cmdWake(rest[0]); break;
@@ -94,7 +95,7 @@ export async function runHeadlessJsonEvents(rt: Runtime): Promise<void> {
           return;
         }
         case "help":
-          text = ":status :why :amnesia :reset :stage :wake :debug :pause :resume :cringe :relationship :persona :log :sticker :snapshot :quit";
+          text = ":status :model :why :amnesia :reset :stage :wake :debug :pause :resume :cringe :relationship :persona :log :sticker :snapshot :quit";
           break;
         case "quit":
         case "exit":

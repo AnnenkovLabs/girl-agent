@@ -99,6 +99,13 @@ export async function writeConfig(cfg: ProfileConfig): Promise<void> {
   );
 }
 
+export async function deleteProfile(slug: string): Promise<void> {
+  if (!slug || slug.includes("/") || slug.includes("\\") || slug === "." || slug === "..") {
+    throw new Error(`некорректный slug профиля: ${slug}`);
+  }
+  await fs.rm(profileDir(slug), { recursive: true, force: true });
+}
+
 export function normalizeOwnerId(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
   if (typeof value === "string" && /^\d+$/.test(value.trim())) {

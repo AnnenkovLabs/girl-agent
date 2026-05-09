@@ -4,7 +4,7 @@ import mri from "mri";
 import { Wizard } from "./wizard/index.js";
 import { Dashboard } from "./dashboard/index.js";
 import { Runtime } from "./engine/runtime.js";
-import { DATA_ROOT, readConfig, listProfiles, slugify, writeConfig, normalizeOwnerId } from "./storage/md.js";
+import { DATA_ROOT, readConfig, listProfiles, slugify, writeConfig, normalizeOwnerId, deleteProfile } from "./storage/md.js";
 import { findPreset } from "./presets/llm.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { makeLLM } from "./llm/index.js";
@@ -16,6 +16,7 @@ import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, n
 import { findStage } from "./presets/stages.js";
 import type { ProfileConfig, ClientMode, StageId, LLMProto, Nationality, CommunicationProfile, PrivacyMode } from "./types.js";
 import { runMigrations, checkForPendingMigrations, formatUpdateWarnings } from "./migrations/index.js";
+import { applyLLMUpdate, describeLLM } from "./config/llm-update.js";
 
 const HELP = `
 girl-agent — AI girl for Telegram
@@ -24,6 +25,8 @@ usage:
   npx girl-agent                       # запустить TUI визард (или автозагрузка если 1 профиль)
   npx girl-agent --new                 # принудительно открыть визард для нового профиля
   npx girl-agent --profile=<slug>      # запустить готовый профиль
+  npx girl-agent --profile=<slug> --set-model --api-preset=<id> --model=<model> [--api-key=<key>]
+  npx girl-agent --profile=<slug> --delete-profile --yes
   npx girl-agent --reset --profile=<slug>
   npx girl-agent <flags>               # пропустить визард с аргументами
 
@@ -61,7 +64,10 @@ required flags для headless setup (--name --age --stage --api-preset --mode; 
   --stage=<id|num>            1=met-irl-got-tg 2=tg-given-cold 3=tg-given-warming 4=convinced 5=first-date-done 6=dating-early 7=dating-stable 8=long-term
   --mcp=exa:KEY               можно несколько раз
   --new                       принудительно открыть визард для нового профиля
-  --list                      показать профили
+  --list                      показать профили и data dir
+  --set-model                 обновить LLM у существующего профиля без ручного config edit
+  --delete-profile            удалить профиль из data dir
+  --yes                       подтвердить опасное действие без вопроса
   --help
 
 update:
@@ -79,7 +85,7 @@ async function main() {
       "notifications", "message-style", "initiative", "life-sharing", "ignore-tendency", "owner-id", "privacy", "config"
     ],
     boolean: [
-      "help", "list", "reset", "new", "json-events", "headless", "server",
+      "help", "list", "reset", "new", "json-events", "headless", "server", "set-model", "delete-profile", "yes",
       "print-config", "print-systemd", "print-docker", "no-start", "verbose"
     ],
     alias: { h: "help" }
@@ -148,6 +154,45 @@ async function main() {
   if (argv.list) {
     const list = await listProfiles();
     process.stdout.write(list.length ? list.join("\n") + "\n" : "(нет профилей)\n");
+    process.stdout.write(`data: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (argv["delete-profile"]) {
+    const slug = typeof argv.profile === "string" ? argv.profile : undefined;
+    if (!slug) {
+      process.stderr.write("--delete-profile требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    if (!argv.yes) {
+      process.stderr.write(`профиль НЕ удалён: добавь --yes для подтверждения.\nбудет удалено: ${DATA_ROOT}/${slug}\n`);
+      process.exit(1);
+    }
+    await deleteProfile(slug);
+    process.stdout.write(`профиль удалён: ${slug}\ndata: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (argv["set-model"]) {
+    const slug = typeof argv.profile === "string" ? argv.profile : undefined;
+    if (!slug) {
+      process.stderr.write("--set-model требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    const cfg = await readConfig(slug);
+    if (!cfg) {
+      process.stderr.write(`profile not found: ${slug}\ndata dir: ${DATA_ROOT}\n`);
+      process.exit(1);
+    }
+    const changed = applyLLMUpdate(cfg, {
+      presetId: typeof argv["api-preset"] === "string" ? argv["api-preset"] : undefined,
+      model: typeof argv.model === "string" ? argv.model : undefined,
+      apiKey: typeof argv["api-key"] === "string" ? argv["api-key"] : undefined,
+      baseURL: typeof argv["base-url"] === "string" ? argv["base-url"] : undefined,
+      proto: argv.proto === "anthropic" ? "anthropic" : argv.proto === "openai" ? "openai" : undefined
+    });
+    await writeConfig(cfg);
+    process.stdout.write((changed.length ? changed.map(x => `- ${x}`).join("\n") : "ничего не изменилось") + "\n\n" + describeLLM(cfg) + "\n");
     return;
   }
 

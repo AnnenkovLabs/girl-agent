@@ -110,6 +110,8 @@ class OpenAILike implements LLMClient {
       this.fetchClient = new OpenAI({ apiKey: key, baseURL: normalizeBaseURL(this.cfg.baseURL), timeout: LLM_TIMEOUT_MS, maxRetries: LLM_MAX_RETRIES, fetch: compatibleFetch });
     } catch (err) {
       process.stderr.write(`[oauth] token refresh failed: ${err instanceof Error ? err.message : err}\n`);
+      this.cfg.oauthRefreshToken = undefined;
+      this.cfg.oauthExpiresAt = undefined;
     }
   }
 
