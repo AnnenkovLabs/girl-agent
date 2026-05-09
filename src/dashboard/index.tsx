@@ -52,6 +52,7 @@ export function Dashboard({ runtime }: { runtime: Runtime }) {
     try {
       switch (head) {
         case "status": append(await runtime.cmdStatus()); break;
+        case "model": append(await runtime.cmdModel(rest)); break;
         case "reset": append(await runtime.cmdReset()); setScore({ interest: 0, trust: 0, attraction: 0, annoyance: 0, cringe: 0 }); break;
         case "stage": append(await runtime.cmdSetStage(rest.join(" "))); break;
         case "wake": append(await runtime.cmdWake(rest[0])); break;
@@ -83,7 +84,7 @@ export function Dashboard({ runtime }: { runtime: Runtime }) {
           append(p.trim() ? p.slice(-Math.max(500, Math.min(limit, 20000))) : `(log/${day}.md пуст или ещё не создан)`);
           break;
         }
-        case "help": append(":status :why :amnesia <мин> [chatId] :reset :stage <id|num> :wake [chatId] :debug [chatId] :pause :resume :cringe :relationship :persona :log [YYYY-MM-DD] [chars] :sticker [chatId] :quit"); break;
+        case "help": append(":status :model [provider] [model=...] [api-key=...] :why :amnesia <мин> [chatId] :reset :stage <id|num> :wake [chatId] :debug [chatId] :pause :resume :cringe :relationship :persona :log [YYYY-MM-DD] [chars] :sticker [chatId] :quit"); break;
         case "quit": case "exit": await runtime.stop(); exit(); break;
         default: append(`неизвестная команда: ${head}`);
       }

@@ -6,13 +6,14 @@ import { findStage } from "./presets/stages.js";
 import { COMMUNICATION_PRESETS } from "./presets/communication.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
-import { DATA_ROOT, slugify, writeConfig, readConfig, listProfiles, normalizeOwnerId } from "./storage/md.js";
+import { DATA_ROOT, slugify, writeConfig, readConfig, listProfiles, normalizeOwnerId, deleteProfile } from "./storage/md.js";
 import { Runtime } from "./engine/runtime.js";
 import { makeLLM } from "./llm/index.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { runHeadlessJsonEvents } from "./headless.js";
 import { checkForPendingMigrations, runMigrations, formatUpdateWarnings } from "./migrations/index.js";
 import type { ProfileConfig, ClientMode, Nationality, StageId, LLMProto, PrivacyMode } from "./types.js";
+import { applyLLMUpdate, describeLLM } from "./config/llm-update.js";
 
 /**
  * Server / automation entrypoint.
@@ -40,6 +41,9 @@ interface ServerArgs {
   jsonEvents?: boolean;
   noStart?: boolean;
   profile?: string;
+  setModel?: boolean;
+  deleteProfile?: boolean;
+  yes?: boolean;
   list?: boolean;
   help?: boolean;
 }
@@ -54,6 +58,8 @@ usage:
 
   girl-agent server --list
   girl-agent server --profile=<slug> --headless
+  girl-agent server --profile=<slug> --set-model --api-preset=<id> --model=<model> [--api-key=<key>]
+  girl-agent server --profile=<slug> --delete-profile --yes
 
   girl-agent server --print-systemd > /etc/systemd/system/girl-agent.service
   girl-agent server --print-docker
@@ -80,6 +86,9 @@ function parseServerArgs(argv: Record<string, unknown>): ServerArgs {
     jsonEvents: !!argv["json-events"],
     noStart: !!argv["no-start"] || argv.start === false,
     profile: typeof argv.profile === "string" ? argv.profile : undefined,
+    setModel: !!argv["set-model"],
+    deleteProfile: !!argv["delete-profile"],
+    yes: !!argv.yes,
     list: !!argv.list,
     help: !!argv.help
   };
@@ -101,6 +110,42 @@ export async function runServer(rawArgv: Record<string, unknown>): Promise<void>
     const list = await listProfiles();
     process.stdout.write(list.length ? list.join("\n") + "\n" : "(нет профилей)\n");
     process.stdout.write(`data: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (args.deleteProfile) {
+    if (!args.profile) {
+      process.stderr.write("--delete-profile требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    if (!args.yes) {
+      process.stderr.write(`профиль НЕ удалён: добавь --yes для подтверждения.\nбудет удалено: ${path.join(DATA_ROOT, args.profile)}\n`);
+      process.exit(1);
+    }
+    await deleteProfile(args.profile);
+    process.stdout.write(`профиль удалён: ${args.profile}\ndata: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (args.setModel) {
+    if (!args.profile) {
+      process.stderr.write("--set-model требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    const cfg = await readConfig(args.profile);
+    if (!cfg) {
+      process.stderr.write(`profile not found: ${args.profile}\ndata dir: ${DATA_ROOT}\n`);
+      process.exit(1);
+    }
+    const changed = applyLLMUpdate(cfg, {
+      presetId: typeof rawArgv["api-preset"] === "string" ? rawArgv["api-preset"] : undefined,
+      model: typeof rawArgv.model === "string" ? rawArgv.model : undefined,
+      apiKey: typeof rawArgv["api-key"] === "string" ? rawArgv["api-key"] : undefined,
+      baseURL: typeof rawArgv["base-url"] === "string" ? rawArgv["base-url"] : undefined,
+      proto: rawArgv.proto === "anthropic" ? "anthropic" : rawArgv.proto === "openai" ? "openai" : undefined
+    });
+    await writeConfig(cfg);
+    process.stdout.write((changed.length ? changed.map(x => `- ${x}`).join("\n") : "ничего не изменилось") + "\n\n" + describeLLM(cfg) + "\n");
     return;
   }
 

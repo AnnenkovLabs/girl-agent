@@ -6,10 +6,11 @@ import { behaviorTick } from "./behavior-tick.js";
 import { applyMoodDelta, maybeReflect } from "./reflect.js";
 import {
   appendSessionLog, readRelationship, writeRelationship, writeConfig, writeMd,
-  readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId
+  readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId, profileDir
 } from "../storage/md.js";
 import { findStage } from "../presets/stages.js";
 import { communicationProfileLabel, normalizeCommunicationProfile } from "../presets/communication.js";
+import { findPreset } from "../presets/llm.js";
 import { startMcpServers, type McpHandle } from "../mcp/client.js";
 import { extractAgendaUpdates, dueAgendaItems, markAgendaFired, decideAfterProactiveResponse, ensureAutonomousAgenda, rescheduleAgenda, reconcileAgendaAfterConflict } from "./agenda.js";
 import { computePresenceProfile, computePresenceState, type PresenceProfile } from "./presence.js";
@@ -24,6 +25,7 @@ import { describeIncomingMedia, imagePartFromMedia } from "./media.js";
 import { looksLikeJailbreak, sanitizeModelReply, silentErrorLabel } from "./security.js";
 import { addStickerToLibrary, pickSticker } from "./stickers.js";
 import { EventEmitter } from "node:events";
+import { applyLLMUpdate, describeLLM } from "../config/llm-update.js";
 
 export interface RuntimeEvent {
   type: "incoming" | "outgoing" | "ignored" | "score" | "info" | "error";
@@ -858,12 +860,44 @@ export class Runtime extends EventEmitter {
       `стадия: ${stage.label} (${this.cfg.stage})`,
       `primary owner: ${this.cfg.ownerId ?? "—"}`,
       `privacy: ${this.cfg.privacy ?? "owner-only"}`,
+      `llm: ${this.cfg.llm.presetId}/${this.cfg.llm.model || "—"} (${this.cfg.llm.proto})`,
       `presence: ${this.presenceProfile.pattern}`,
       `communication: ${communicationProfileLabel(communication)}`,
+      `config: ${profileDir(this.cfg.slug)}/config.json`,
       `score: ${JSON.stringify(rel.score)}`,
       `mcp: ${this.mcps.map(m => m.id).join(", ") || "—"}`,
       `paused: ${this.paused}`
     ].join("\n");
+  }
+
+  async cmdModel(args: string[]): Promise<string> {
+    const parts = args.map(x => x.trim()).filter(Boolean);
+    if (!parts.length || parts[0] === "show") return describeLLM(this.cfg);
+
+    const update: { presetId?: string; model?: string; apiKey?: string; baseURL?: string; proto?: "openai" | "anthropic" } = {};
+    for (const part of parts) {
+      const eq = part.indexOf("=");
+      if (eq === -1) {
+        if (!update.presetId && findPreset(part)) update.presetId = part;
+        else update.model = part;
+        continue;
+      }
+      const key = part.slice(0, eq);
+      const value = part.slice(eq + 1);
+      if (key === "preset" || key === "provider" || key === "api-preset") update.presetId = value;
+      else if (key === "model") update.model = value;
+      else if (key === "key" || key === "api-key") update.apiKey = value;
+      else if (key === "base-url" || key === "baseURL") update.baseURL = value;
+      else if (key === "proto" && (value === "openai" || value === "anthropic")) update.proto = value;
+      else throw new Error(`неизвестный параметр :model: ${key}`);
+    }
+
+    const changed = applyLLMUpdate(this.cfg, update);
+    this.llm = makeLLM(this.cfg.llm);
+    await writeConfig(this.cfg);
+    return changed.length
+      ? `модель обновлена без ручного config edit:\n${changed.map(x => `- ${x}`).join("\n")}\n\n${describeLLM(this.cfg)}`
+      : `ничего не изменилось\n\n${describeLLM(this.cfg)}`;
   }
 
   async cmdReset(): Promise<string> {
