@@ -113,7 +113,7 @@ jobs:
 
           # Формируем JSON через jq (безопасное экранирование)
           JSON_BODY=$(jq -n --arg prompt "$PROMPT" '{
-            model: "gpt-4o-mini",
+            model: "gpt-5-mini",
             messages: [{role: "user", content: $prompt}],
             temperature: 0.3,
             max_tokens: 2000
