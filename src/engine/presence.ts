@@ -116,6 +116,12 @@ function isHourInRange(h: number, from: number, to: number): boolean {
   return h >= from || h < to;
 }
 
+function minutesUntil(hour: number, minute: number, targetHour: number, targetMinute: number): number {
+  const now = hour * 60 + minute;
+  const target = targetHour * 60 + targetMinute;
+  return target > now ? target - now : target + 1440 - now;
+}
+
 const WEEKDAYS: Weekday[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 function localParts(tz: string): { hour: number; minute: number; weekday: Weekday } {
@@ -305,9 +311,10 @@ export function computePresenceState(
     nextCheckSec = Math.floor(hoursToWake * 3600) + Math.floor(Math.random() * 1800);
   } else if (busySlot && !forcedWake) {
     const busyMul = communication.notifications === "priority" ? 0.45 : communication.notifications === "muted" ? 1.25 : 1;
+    const activeDialogMul = inActiveDialog ? 0.35 : 1;
     const [rawMinCheck, rawMaxCheck] = busySlot.slot.checkAfterMin ?? [5, 15];
-    const minCheck = Math.max(1, Math.round(rawMinCheck * busyMul));
-    const maxCheck = Math.max(minCheck, Math.round(rawMaxCheck * busyMul));
+    const minCheck = Math.max(1, Math.round(rawMinCheck * busyMul * activeDialogMul));
+    const maxCheck = Math.max(minCheck, Math.round(rawMaxCheck * busyMul * activeDialogMul));
     if (maxCheck <= 5) {
       // Скучное занятие — мини-заходы в Telegram каждые 1-5 минут на 30-90 секунд
       const cycleMin = Math.max(1, Math.round((minCheck + maxCheck) / 2));
@@ -321,7 +328,9 @@ export function computePresenceState(
     } else {
       online = false;
       const checkAfterMin = minCheck + Math.floor(Math.random() * (maxCheck - minCheck + 1));
-      nextCheckSec = (busySlot.remainingMin + checkAfterMin) * 60;
+      const activeDialogCapMin = communication.notifications === "priority" ? 12 : 20;
+      const waitMin = inActiveDialog ? Math.min(busySlot.remainingMin + checkAfterMin, activeDialogCapMin) : busySlot.remainingMin + checkAfterMin;
+      nextCheckSec = waitMin * 60;
       busy = { label: busySlot.slot.label, until: busySlot.until, checkAfterMin };
     }
   } else if (forcedWake) {
@@ -336,10 +345,14 @@ export function computePresenceState(
     const isNightOwl = localHour >= 22 || localHour < 8;
     if (profile.pattern === "evening-only" && !isEvening) {
       online = false;
-      nextCheckSec = (18 - localHour) * 3600 - localMinute * 60 + Math.floor(Math.random() * 600);
+      const minutesToEvening = Math.max(1, minutesUntil(localHour, localMinute, 18, 0));
+      const capMin = communication.notifications === "priority" ? 20 : communication.initiative === "high" ? 35 : minutesToEvening;
+      nextCheckSec = Math.min(minutesToEvening, capMin) * 60 + Math.floor(Math.random() * 600);
     } else if (profile.pattern === "phone-attached-night" && !isNightOwl) {
       online = false;
-      nextCheckSec = (22 - localHour) * 3600 - localMinute * 60 + Math.floor(Math.random() * 600);
+      const minutesToNight = Math.max(1, minutesUntil(localHour, localMinute, 22, 0));
+      const capMin = communication.notifications === "priority" ? 15 : communication.initiative === "high" ? 30 : 75;
+      nextCheckSec = Math.min(minutesToNight, capMin) * 60 + Math.floor(Math.random() * 600);
     } else {
       // Использую псевдо-случайный окно: вероятность что СЕЙЧАС в окне = onlineWindow / (onlineWindow + checkEvery)
       const onlineProb = profile.onlineWindowMin / (profile.onlineWindowMin + profile.checkEveryMin);

@@ -4,7 +4,7 @@ import mri from "mri";
 import { Wizard } from "./wizard/index.js";
 import { Dashboard } from "./dashboard/index.js";
 import { Runtime } from "./engine/runtime.js";
-import { DATA_ROOT, readConfig, listProfiles, slugify, writeConfig } from "./storage/md.js";
+import { DATA_ROOT, readConfig, listProfiles, slugify, writeConfig, normalizeOwnerId, deleteProfile } from "./storage/md.js";
 import { findPreset } from "./presets/llm.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { makeLLM } from "./llm/index.js";
@@ -16,6 +16,7 @@ import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, n
 import { findStage } from "./presets/stages.js";
 import type { ProfileConfig, ClientMode, StageId, LLMProto, Nationality, CommunicationProfile, PrivacyMode } from "./types.js";
 import { runMigrations, checkForPendingMigrations, formatUpdateWarnings } from "./migrations/index.js";
+import { applyLLMUpdate, describeLLM } from "./config/llm-update.js";
 
 const HELP = `
 girl-agent — AI girl for Telegram
@@ -24,6 +25,8 @@ usage:
   npx girl-agent                       # запустить TUI визард (или автозагрузка если 1 профиль)
   npx girl-agent --new                 # принудительно открыть визард для нового профиля
   npx girl-agent --profile=<slug>      # запустить готовый профиль
+  npx girl-agent --profile=<slug> --set-model --api-preset=<id> --model=<model> [--api-key=<key>]
+  npx girl-agent --profile=<slug> --delete-profile --yes
   npx girl-agent --reset --profile=<slug>
   npx girl-agent <flags>               # пропустить визард с аргументами
 
@@ -53,20 +56,25 @@ required flags для headless setup (--name --age --stage --api-preset --mode; 
   --message-style=<style>     one-liners|balanced|bursty|longform
   --initiative=<level>        low|medium|high
   --life-sharing=<level>      low|medium|high
+  --ignore-tendency=<0..100>  склонность к игнору как вес decision-layer (не прямой рандом)
+  --owner-id=<tg_user_id>     явно закрепить владельца (если bot mode не узнал тебя)
   --privacy=<mode>            owner-only|allow-strangers (по умолчанию owner-only)
   --nationality=RU|UA         (по умолчанию RU)
   --tz=<value>                IANA "Europe/Moscow" / "GMT+3" / "+3" / "Киев" — поиск
   --stage=<id|num>            1=met-irl-got-tg 2=tg-given-cold 3=tg-given-warming 4=convinced 5=first-date-done 6=dating-early 7=dating-stable 8=long-term
   --mcp=exa:KEY               можно несколько раз
   --new                       принудительно открыть визард для нового профиля
-  --list                      показать профили
+  --list                      показать профили и data dir
+  --set-model                 обновить LLM у существующего профиля без ручного config edit
+  --delete-profile            удалить профиль из data dir
+  --yes                       подтвердить опасное действие без вопроса
   --help
 
 update:
   npx girl-agent update                # обновить данные (миграции) до текущей версии
   npx girl-agent update --verbose      # с подробным выводом
 
-команды в работающем дашборде: :status :reset :stage <id|num> :pause :resume :cringe :persona :log :quit
+команды в работающем дашборде: :status :why :amnesia <мин> :reset :stage <id|num> :pause :resume :cringe :persona :log :sticker :quit
 `;
 
 async function main() {
@@ -74,10 +82,10 @@ async function main() {
     string: [
       "profile", "mode", "token", "api-id", "api-hash", "phone", "api-preset", "base-url", "proto", "model", "api-key",
       "name", "stage", "mcp", "nationality", "tz", "vibe", "persona-notes", "communication-preset",
-      "notifications", "message-style", "initiative", "life-sharing", "privacy", "config"
+      "notifications", "message-style", "initiative", "life-sharing", "ignore-tendency", "owner-id", "privacy", "config"
     ],
     boolean: [
-      "help", "list", "reset", "new", "json-events", "headless", "server",
+      "help", "list", "reset", "new", "json-events", "headless", "server", "set-model", "delete-profile", "yes",
       "print-config", "print-systemd", "print-docker", "no-start", "verbose"
     ],
     alias: { h: "help" }
@@ -146,6 +154,45 @@ async function main() {
   if (argv.list) {
     const list = await listProfiles();
     process.stdout.write(list.length ? list.join("\n") + "\n" : "(нет профилей)\n");
+    process.stdout.write(`data: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (argv["delete-profile"]) {
+    const slug = typeof argv.profile === "string" ? argv.profile : undefined;
+    if (!slug) {
+      process.stderr.write("--delete-profile требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    if (!argv.yes) {
+      process.stderr.write(`профиль НЕ удалён: добавь --yes для подтверждения.\nбудет удалено: ${DATA_ROOT}/${slug}\n`);
+      process.exit(1);
+    }
+    await deleteProfile(slug);
+    process.stdout.write(`профиль удалён: ${slug}\ndata: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (argv["set-model"]) {
+    const slug = typeof argv.profile === "string" ? argv.profile : undefined;
+    if (!slug) {
+      process.stderr.write("--set-model требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    const cfg = await readConfig(slug);
+    if (!cfg) {
+      process.stderr.write(`profile not found: ${slug}\ndata dir: ${DATA_ROOT}\n`);
+      process.exit(1);
+    }
+    const changed = applyLLMUpdate(cfg, {
+      presetId: typeof argv["api-preset"] === "string" ? argv["api-preset"] : undefined,
+      model: typeof argv.model === "string" ? argv.model : undefined,
+      apiKey: typeof argv["api-key"] === "string" ? argv["api-key"] : undefined,
+      baseURL: typeof argv["base-url"] === "string" ? argv["base-url"] : undefined,
+      proto: argv.proto === "anthropic" ? "anthropic" : argv.proto === "openai" ? "openai" : undefined
+    });
+    await writeConfig(cfg);
+    process.stdout.write((changed.length ? changed.map(x => `- ${x}`).join("\n") : "ничего не изменилось") + "\n\n" + describeLLM(cfg) + "\n");
     return;
   }
 
@@ -256,10 +303,12 @@ async function buildConfigFromFlags(argv: any): Promise<ProfileConfig> {
         },
     mcp: mcps,
     privacy,
+    ownerId: normalizeOwnerId(argv["owner-id"] ?? process.env.GIRL_AGENT_OWNER_ID),
     createdAt: new Date().toISOString(),
     sleepFrom: 23,
     sleepTo: 8,
     nightWakeChance: 0.05,
+    ignoreTendency: Number(argv["ignore-tendency"] ?? 35),
     vibe: deriveLegacyVibe(communication),
     communication,
     personaNotes: argv["persona-notes"] ? String(argv["persona-notes"]) : undefined,

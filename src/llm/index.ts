@@ -55,6 +55,29 @@ export interface LLMClient {
 const LLM_TIMEOUT_MS = 120_000;
 const LLM_MAX_RETRIES = 1;
 
+let llmQueueTail: Promise<void> = Promise.resolve();
+
+class SerializedLLMClient implements LLMClient {
+  constructor(private inner: LLMClient) {}
+
+  chat(messages: ChatMessage[], opts: LLMOptions = {}): Promise<string> {
+    return runExclusiveLLM(() => this.inner.chat(messages, opts));
+  }
+}
+
+async function runExclusiveLLM<T>(task: () => Promise<T>): Promise<T> {
+  const previous = llmQueueTail.catch(() => undefined);
+  let release = () => {};
+  const current = new Promise<void>(resolve => { release = resolve; });
+  llmQueueTail = previous.then(() => current);
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
+
 class OpenAILike implements LLMClient {
   private client: OpenAI;
   private fetchClient: OpenAI;
@@ -87,6 +110,8 @@ class OpenAILike implements LLMClient {
       this.fetchClient = new OpenAI({ apiKey: key, baseURL: normalizeBaseURL(this.cfg.baseURL), timeout: LLM_TIMEOUT_MS, maxRetries: LLM_MAX_RETRIES, fetch: compatibleFetch });
     } catch (err) {
       process.stderr.write(`[oauth] token refresh failed: ${err instanceof Error ? err.message : err}\n`);
+      this.cfg.oauthRefreshToken = undefined;
+      this.cfg.oauthExpiresAt = undefined;
     }
   }
 
@@ -407,5 +432,6 @@ function errorMessage(error: unknown): string {
 }
 
 export function makeLLM(cfg: ProfileConfig["llm"]): LLMClient {
-  return cfg.proto === "anthropic" ? new AnthropicLike(cfg) : new OpenAILike(cfg);
+  const inner = cfg.proto === "anthropic" ? new AnthropicLike(cfg) : new OpenAILike(cfg);
+  return new SerializedLLMClient(inner);
 }

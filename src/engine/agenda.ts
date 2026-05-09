@@ -116,14 +116,14 @@ function localParts(tz: string, when: Date): { hour: number; minute: number; wee
 
 function maxAutonomousItems(stage: string, initiative: "low" | "medium" | "high"): number {
   let base =
-    stage === "tg-given-cold" ? 0 :
+    stage === "tg-given-cold" ? (initiative === "high" ? 1 : 0) :
     stage === "met-irl-got-tg" ? 1 :
     stage === "tg-given-warming" ? 1 :
     stage === "convinced" || stage === "first-date-done" ? 2 :
     stage === "dating-early" ? 3 :
     4;
   if (initiative === "low") base = Math.max(0, base - 1);
-  if (initiative === "high") base += stage === "tg-given-cold" ? 0 : 1;
+  if (initiative === "high") base += 1;
   return base;
 }
 
@@ -248,7 +248,7 @@ export async function extractAgendaUpdates(
   const stage = findStage(cfg.stage);
   const communication = normalizeCommunicationProfile(cfg);
   // Агенда не для холодных стадий — экономим LLM-вызовы.
-  if (cfg.stage === "tg-given-cold" || (cfg.stage === "met-irl-got-tg" && communication.initiative === "low")) {
+  if ((cfg.stage === "tg-given-cold" && communication.initiative !== "high") || (cfg.stage === "met-irl-got-tg" && communication.initiative === "low")) {
     return { created: 0, updated: 0, cancelled: 0 };
   }
 

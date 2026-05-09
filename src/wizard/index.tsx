@@ -8,7 +8,7 @@ import BigText from "ink-big-text";
 import { LLM_PRESETS, findPreset } from "../presets/llm.js";
 import { MCP_PRESETS } from "../presets/mcp.js";
 import { STAGE_PRESETS } from "../presets/stages.js";
-import { COMMUNICATION_PRESETS, communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "../presets/communication.js";
+import { COMMUNICATION_PRESETS, communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, ignoreTendencyLabel, normalizeCommunicationProfile, normalizeIgnoreTendency } from "../presets/communication.js";
 import type { ProfileConfig, ClientMode, LLMProto, StageId, Nationality, BusySlot, CommunicationProfile, PrivacyMode } from "../types.js";
 import { slugify, writeConfig } from "../storage/md.js";
 import { makeLLM } from "../llm/index.js";
@@ -26,7 +26,7 @@ type Step =
   | "api-preset" | "api-auth-method" | "api-oauth" | "api-base" | "api-model" | "api-model-custom" | "api-key"
   | "nationality" | "name-mode" | "name" | "name-tournament" | "name-tournament-knockout"
   | "age" | "sleep" | "sleep-custom-from" | "sleep-custom-to" | "sleep-custom-chance" | "vibe"
-  | "comm-notifications" | "comm-style" | "comm-initiative" | "comm-life"
+  | "comm-notifications" | "comm-style" | "comm-initiative" | "comm-life" | "ignore-tendency"
   | "privacy" | "tz" | "persona-notes" | "generating" | "generation-error" | "stage" | "mcp-pick" | "mcp-secret" | "saving" | "done";
 
 const TOURNAMENT_ROUNDS = 20;
@@ -101,6 +101,7 @@ export function Wizard({ initial, onDone }: {
   const [sleepToStr, setSleepToStr] = useState("8");
   const [nightWakeStr, setNightWakeStr] = useState("5");
   const [communicationProfile, setCommunicationProfile] = useState<CommunicationProfile>(normalizeCommunicationProfile(initial));
+  const [ignoreTendencyStr, setIgnoreTendencyStr] = useState(String(normalizeIgnoreTendency(initial?.ignoreTendency)));
   const [privacy, setPrivacy] = useState<PrivacyMode>(initial?.privacy ?? "owner-only");
   const [stage, setStage] = useState<StageId>(initial?.stage ?? "tg-given-cold");
 
@@ -833,7 +834,7 @@ export function Wizard({ initial, onDone }: {
               }
               const preset = findCommunicationPreset(String(it.value));
               if (preset) setCommunicationProfile(preset.profile);
-              setStep("privacy");
+              setStep("ignore-tendency");
             }}
           />
         </Box>
@@ -922,10 +923,29 @@ export function Wizard({ initial, onDone }: {
             ]}
             onSelect={(it) => {
               setCommunicationProfile(p => ({ ...p, lifeSharing: it.value as CommunicationProfile["lifeSharing"] }));
+              setStep("ignore-tendency");
+            }}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
+  if (step === "ignore-tendency") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Header sub="склонность к игнору" />
+        <Bar step={8} total={13} />
+        <Box marginTop={1}>
+          <SelectInput
+            items={[5, 15, 30, 45, 60, 75, 90].map(value => ({ label: ignoreTendencyLabel(value), value: String(value) }))}
+            onSelect={(it) => {
+              setIgnoreTendencyStr(it.value);
               setStep("privacy");
             }}
           />
         </Box>
+        <Text dimColor>Это вес для умного расчёта, не прямой рандом-процент.</Text>
       </Box>
     );
   }
@@ -934,7 +954,7 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="приватность Telegram" />
-        <Bar step={8} total={13} />
+        <Bar step={9} total={13} />
         <Box marginTop={1}>
           <SelectInput
             items={[
@@ -957,7 +977,7 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="её часовой пояс (где живёт)" />
-        <Bar step={9} total={13} />
+        <Bar step={10} total={13} />
         <Box marginTop={1}><Text>поиск (город/страна/GMT): </Text>
           <TextInput value={tzQuery} onChange={setTzQuery} onSubmit={() => {
             if (matches[0]) {
@@ -982,7 +1002,7 @@ export function Wizard({ initial, onDone }: {
     return (
       <Box flexDirection="column" padding={1}>
         <Header sub="доп. пожелания к персоне (необязательно)" />
-        <Bar step={10} total={13} />
+        <Bar step={11} total={14} />
         <Box marginTop={1} flexDirection="column">
           <Text dimColor>Пример: дерзкая, учится на дизайнера, не любит аниме, сухая манера речи, живёт с мамой, ревнивая.</Text>
           <Box marginTop={1}><Text>notes: </Text>
@@ -1159,6 +1179,7 @@ export function Wizard({ initial, onDone }: {
       sleepFrom: Number(sleepFromStr),
       sleepTo: Number(sleepToStr),
       nightWakeChance: Number(nightWakeStr) / 100,
+      ignoreTendency: normalizeIgnoreTendency(ignoreTendencyStr),
       vibe: deriveLegacyVibe(communicationProfile),
       communication: communicationProfile,
       personaNotes: personaNotes.trim() || undefined,

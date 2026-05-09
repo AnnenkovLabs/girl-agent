@@ -64,6 +64,27 @@ export function normalizeCommunicationProfile(source?: Pick<Partial<ProfileConfi
   };
 }
 
+export function normalizeIgnoreTendency(value: unknown): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : 35;
+  if (!Number.isFinite(parsed)) return 35;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+export function ignoreTendencyLabel(value: number): string {
+  const pct = normalizeIgnoreTendency(value);
+  if (pct <= 10) return `${pct}% — почти не игнорит без причины`;
+  if (pct <= 30) return `${pct}% — отвечает чаще обычного`;
+  if (pct <= 50) return `${pct}% — нормальная живость/избирательность`;
+  if (pct <= 70) return `${pct}% — сухая, часто пропадает`;
+  return `${pct}% — очень холодная, игнорит часто`;
+}
+
+export function ignoreTendencyPrompt(value: unknown): string {
+  const pct = normalizeIgnoreTendency(value);
+  return `# СКЛОННОСТЬ К ИГНОРУ
+${pct}/100. Это НЕ прямой процент рандома, а характерный вес: выше = чаще оставляет без ответа, медленнее восстанавливает диалог, чаще read/ignore на скуку; ниже = чаще отвечает, даже если коротко. Сон, конфликт, занятость, стадия и score важнее этого веса.`;
+}
+
 export function deriveLegacyVibe(profile: CommunicationProfile): "short" | "warm" {
   return profile.messageStyle === "one-liners" && profile.initiative === "low" && profile.lifeSharing === "low" ? "short" : "warm";
 }

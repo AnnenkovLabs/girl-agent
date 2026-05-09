@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.1.19
+
+Дата: 2026-05-09
+
+🔧 Улучшения
+
+- Переработан автоматический процесс релизов: улучшена стабильность и функциональность workflow для автопубликации релизов
+
+
+## 0.1.18
+
+Дата: 2026-05-09
+
+- chore(ci): switch changelog model to gpt-5-mini
+- feat(ci): AI-powered changelog generation via GitHub Models API
+- Improve profile and model config UX
+
+
+## 0.1.17
+
+Дата: 2026-05-09
+
+- Merge pull request #65 from TheSashaDev/devin/1778314838-bug-sweep
+- Harden owner id handling
+- Improve why and wake commands
+- Fix Telegram behavior and setup issues
+
+## 0.1.16
+
+Дата: 2026-05-08
+
+- Merge pull request #63 from TheSashaDev/devin/1778244236-serialize-llm-requests
+- Serialize LLM provider requests
+
+## 0.1.15
+
+Дата: 2026-05-08
+
+- Merge pull request #62 from TheSashaDev/devin/1778239329-fix-proactive-memory-and-username
+- fix: proactive messages account for conversation memory + add TG identity to system prompt
+
 ## 0.1.14
 
 Дата: 2026-05-08

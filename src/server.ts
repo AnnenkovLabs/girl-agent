@@ -6,13 +6,14 @@ import { findStage } from "./presets/stages.js";
 import { COMMUNICATION_PRESETS } from "./presets/communication.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
-import { DATA_ROOT, slugify, writeConfig, readConfig, listProfiles } from "./storage/md.js";
+import { DATA_ROOT, slugify, writeConfig, readConfig, listProfiles, normalizeOwnerId, deleteProfile } from "./storage/md.js";
 import { Runtime } from "./engine/runtime.js";
 import { makeLLM } from "./llm/index.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { runHeadlessJsonEvents } from "./headless.js";
 import { checkForPendingMigrations, runMigrations, formatUpdateWarnings } from "./migrations/index.js";
 import type { ProfileConfig, ClientMode, Nationality, StageId, LLMProto, PrivacyMode } from "./types.js";
+import { applyLLMUpdate, describeLLM } from "./config/llm-update.js";
 
 /**
  * Server / automation entrypoint.
@@ -40,6 +41,9 @@ interface ServerArgs {
   jsonEvents?: boolean;
   noStart?: boolean;
   profile?: string;
+  setModel?: boolean;
+  deleteProfile?: boolean;
+  yes?: boolean;
   list?: boolean;
   help?: boolean;
 }
@@ -54,6 +58,8 @@ usage:
 
   girl-agent server --list
   girl-agent server --profile=<slug> --headless
+  girl-agent server --profile=<slug> --set-model --api-preset=<id> --model=<model> [--api-key=<key>]
+  girl-agent server --profile=<slug> --delete-profile --yes
 
   girl-agent server --print-systemd > /etc/systemd/system/girl-agent.service
   girl-agent server --print-docker
@@ -64,7 +70,7 @@ env-vars (для CI / docker secrets / k8s):
   GIRL_AGENT_TOKEN          telegram bot token
   GIRL_AGENT_API_PRESET     openai|anthropic|claudehub|...
   GIRL_AGENT_API_KEY        ключ от провайдера
-  GIRL_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET
+  GIRL_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET, _IGNORE_TENDENCY, _OWNER_ID
 
 для интерактивной первичной настройки запускай без флагов в обычном терминале —
 откроется ink-визард.
@@ -80,6 +86,9 @@ function parseServerArgs(argv: Record<string, unknown>): ServerArgs {
     jsonEvents: !!argv["json-events"],
     noStart: !!argv["no-start"] || argv.start === false,
     profile: typeof argv.profile === "string" ? argv.profile : undefined,
+    setModel: !!argv["set-model"],
+    deleteProfile: !!argv["delete-profile"],
+    yes: !!argv.yes,
     list: !!argv.list,
     help: !!argv.help
   };
@@ -101,6 +110,42 @@ export async function runServer(rawArgv: Record<string, unknown>): Promise<void>
     const list = await listProfiles();
     process.stdout.write(list.length ? list.join("\n") + "\n" : "(нет профилей)\n");
     process.stdout.write(`data: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (args.deleteProfile) {
+    if (!args.profile) {
+      process.stderr.write("--delete-profile требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    if (!args.yes) {
+      process.stderr.write(`профиль НЕ удалён: добавь --yes для подтверждения.\nбудет удалено: ${path.join(DATA_ROOT, args.profile)}\n`);
+      process.exit(1);
+    }
+    await deleteProfile(args.profile);
+    process.stdout.write(`профиль удалён: ${args.profile}\ndata: ${DATA_ROOT}\n`);
+    return;
+  }
+
+  if (args.setModel) {
+    if (!args.profile) {
+      process.stderr.write("--set-model требует --profile=<slug>\n");
+      process.exit(1);
+    }
+    const cfg = await readConfig(args.profile);
+    if (!cfg) {
+      process.stderr.write(`profile not found: ${args.profile}\ndata dir: ${DATA_ROOT}\n`);
+      process.exit(1);
+    }
+    const changed = applyLLMUpdate(cfg, {
+      presetId: typeof rawArgv["api-preset"] === "string" ? rawArgv["api-preset"] : undefined,
+      model: typeof rawArgv.model === "string" ? rawArgv.model : undefined,
+      apiKey: typeof rawArgv["api-key"] === "string" ? rawArgv["api-key"] : undefined,
+      baseURL: typeof rawArgv["base-url"] === "string" ? rawArgv["base-url"] : undefined,
+      proto: rawArgv.proto === "anthropic" ? "anthropic" : rawArgv.proto === "openai" ? "openai" : undefined
+    });
+    await writeConfig(cfg);
+    process.stdout.write((changed.length ? changed.map(x => `- ${x}`).join("\n") : "ничего не изменилось") + "\n\n" + describeLLM(cfg) + "\n");
     return;
   }
 
@@ -233,14 +278,17 @@ function configFromEnv(): ProfileConfig | null {
       : {
           apiId: Number(e.GIRL_AGENT_TG_API_ID ?? 0),
           apiHash: e.GIRL_AGENT_TG_API_HASH ?? "",
-          phone: e.GIRL_AGENT_TG_PHONE ?? ""
+          phone: e.GIRL_AGENT_TG_PHONE ?? "",
+          proxy: parseTelegramProxy(e.GIRL_AGENT_TG_PROXY)
         },
     mcp: [],
+    ownerId: normalizeOwnerId(e.GIRL_AGENT_OWNER_ID),
     privacy: "owner-only" as PrivacyMode,
     createdAt: new Date().toISOString(),
     sleepFrom: Number(e.GIRL_AGENT_SLEEP_FROM ?? 23),
     sleepTo: Number(e.GIRL_AGENT_SLEEP_TO ?? 8),
     nightWakeChance: Number(e.GIRL_AGENT_NIGHT_WAKE ?? 0.05),
+    ignoreTendency: Number(e.GIRL_AGENT_IGNORE_TENDENCY ?? 35),
     communication: commPreset.profile,
     vibe: commPreset.profile.messageStyle === "one-liners" ? "short" : "warm",
     busySchedule: []
@@ -299,17 +347,41 @@ function validateConfig(raw: unknown): ProfileConfig {
     },
     telegram: c.telegram ?? {},
     mcp: c.mcp ?? [],
+    ownerId: normalizeOwnerId(c.ownerId ?? process.env.GIRL_AGENT_OWNER_ID),
     privacy: c.privacy ?? "owner-only",
     createdAt: c.createdAt ?? new Date().toISOString(),
     sleepFrom: c.sleepFrom ?? 23,
     sleepTo: c.sleepTo ?? 8,
     nightWakeChance: c.nightWakeChance ?? 0.05,
+    ignoreTendency: c.ignoreTendency ?? 35,
     communication: c.communication ?? COMMUNICATION_PRESETS[0]!.profile,
     vibe: c.vibe,
     personaNotes: c.personaNotes,
     busySchedule: c.busySchedule ?? []
   };
   return filled;
+}
+
+function parseTelegramProxy(raw: string | undefined): ProfileConfig["telegram"]["proxy"] | undefined {
+  if (!raw?.trim()) return undefined;
+  try {
+    const url = new URL(raw);
+    const socksType = url.protocol === "socks4:" ? 4 : 5;
+    const port = Number(url.port);
+    if (!url.hostname || !Number.isInteger(port) || port <= 0) return undefined;
+    return {
+      ip: url.hostname,
+      port,
+      socksType,
+      username: url.username ? decodeURIComponent(url.username) : undefined,
+      password: url.password ? decodeURIComponent(url.password) : undefined
+    };
+  } catch {
+    const [host, portRaw] = raw.split(":");
+    const port = Number(portRaw);
+    if (!host || !Number.isInteger(port) || port <= 0) return undefined;
+    return { ip: host, port, socksType: 5 };
+  }
 }
 
 // ---------------- ops scaffolds ----------------
@@ -332,11 +404,13 @@ function buildConfigTemplate(): string {
     },
     telegram: { botToken: "REPLACE_ME" },
     mcp: [],
+    ownerId: undefined,
     privacy: "owner-only",
     createdAt: new Date().toISOString(),
     sleepFrom: 23,
     sleepTo: 8,
     nightWakeChance: 0.05,
+    ignoreTendency: 35,
     communication: COMMUNICATION_PRESETS[0]!.profile,
     vibe: "warm",
     busySchedule: []

@@ -6,10 +6,11 @@ import { behaviorTick } from "./behavior-tick.js";
 import { applyMoodDelta, maybeReflect } from "./reflect.js";
 import {
   appendSessionLog, readRelationship, writeRelationship, writeConfig, writeMd,
-  readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate
+  readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId, profileDir
 } from "../storage/md.js";
 import { findStage } from "../presets/stages.js";
 import { communicationProfileLabel, normalizeCommunicationProfile } from "../presets/communication.js";
+import { findPreset } from "../presets/llm.js";
 import { startMcpServers, type McpHandle } from "../mcp/client.js";
 import { extractAgendaUpdates, dueAgendaItems, markAgendaFired, decideAfterProactiveResponse, ensureAutonomousAgenda, rescheduleAgenda, reconcileAgendaAfterConflict } from "./agenda.js";
 import { computePresenceProfile, computePresenceState, type PresenceProfile } from "./presence.js";
@@ -24,6 +25,7 @@ import { describeIncomingMedia, imagePartFromMedia } from "./media.js";
 import { looksLikeJailbreak, sanitizeModelReply, silentErrorLabel } from "./security.js";
 import { addStickerToLibrary, pickSticker } from "./stickers.js";
 import { EventEmitter } from "node:events";
+import { applyLLMUpdate, describeLLM } from "../config/llm-update.js";
 
 export interface RuntimeEvent {
   type: "incoming" | "outgoing" | "ignored" | "score" | "info" | "error";
@@ -34,6 +36,27 @@ export interface RuntimeEvent {
 }
 
 type RuntimeTick = Awaited<ReturnType<typeof behaviorTick>>;
+
+interface DecisionSnapshot {
+  chatId: number | string;
+  at: number;
+  incoming: string;
+  status: "scheduled" | "ignored" | "sending" | "sent" | "fallback" | "cancelled";
+  intent: RuntimeTick["intent"];
+  shouldReply: boolean;
+  delaySec: number;
+  dueAt?: number;
+  ignoreReason?: string;
+  presenceOnline?: boolean;
+  presenceAsleep?: boolean;
+  presenceNightAwake?: boolean;
+  presenceNextCheckSec?: number;
+  presenceHint?: string;
+  activeDialog?: boolean;
+  coldActive?: boolean;
+  blockHint?: string;
+  note?: string;
+}
 
 export class Runtime extends EventEmitter {
   private llm: LLMClient;
@@ -60,12 +83,15 @@ export class Runtime extends EventEmitter {
   private pendingReplyTimers = new Map<string, NodeJS.Timeout>();
   private pendingReplySeq = new Map<string, number>();
   private pendingReplyIncoming = new Map<string, IncomingMessage>();
+  private pendingReplyDueAt = new Map<string, number>();
+  private lastDecision = new Map<string, DecisionSnapshot>();
   private incomingSeq = new Map<string, number>();
   private tgSelf: { username?: string; displayName?: string } = {};
 
   constructor(public cfg: ProfileConfig) {
     super();
     void ("8b3f7a2d" as const);
+    this.cfg.ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.GIRL_AGENT_OWNER_ID);
     this.llm = makeLLM(cfg.llm);
   }
 
@@ -86,18 +112,23 @@ export class Runtime extends EventEmitter {
     this.agendaTimer = setInterval(() => this.tickAgenda().catch(e =>
       this.emit("event", { type: "error", text: "agenda tick: " + (e as Error).message } as RuntimeEvent)
     ), 60_000);
+    this.agendaTimer.unref?.();
 
     // Раз в 30 мин обновляем daily-life (если сменился день) + закрываем старые сессии в summary
     this.dailyTimer = setInterval(() => this.dailyMaintenance().catch(e =>
       this.emit("event", { type: "error", text: "daily maintenance: " + (e as Error).message } as RuntimeEvent)
     ), 30 * 60_000);
+    this.dailyTimer.unref?.();
   }
 
   async stop(): Promise<void> {
     if (this.agendaTimer) clearInterval(this.agendaTimer);
     if (this.dailyTimer) clearInterval(this.dailyTimer);
+    for (const timer of this.pendingReplyTimers.values()) clearTimeout(timer);
+    this.pendingReplyTimers.clear();
+    this.pendingReplyDueAt.clear();
     try {
-      const made = await closeCurrentSession(this.llm, this.cfg);
+      const made = await withTimeout(closeCurrentSession(this.llm, this.cfg), 3500);
       if (made) this.emit("event", { type: "info", text: "daily summary обновлена" } as RuntimeEvent);
     } catch (e) {
       this.emit("event", { type: "error", text: "daily summary: " + (e as Error).message } as RuntimeEvent);
@@ -124,20 +155,46 @@ export class Runtime extends EventEmitter {
   ): void {
     const existing = this.pendingReplyTimers.get(key);
     if (existing) clearTimeout(existing);
+    if (existing) this.setDecisionStatus(key, "cancelled", "заменено новым входящим сообщением");
     const seq = (this.pendingReplySeq.get(key) ?? 0) + 1;
     this.pendingReplySeq.set(key, seq);
     this.pendingReplyIncoming.set(key, incoming);
+    const dueAt = Date.now() + delaySec * 1000;
+    this.pendingReplyDueAt.set(key, dueAt);
+    const prev = this.lastDecision.get(key);
+    this.lastDecision.set(key, {
+      ...prev,
+      chatId,
+      at: Date.now(),
+      incoming: this.mediaAwareText(incoming),
+      status: "scheduled",
+      intent: tick.intent,
+      shouldReply: tick.shouldReply,
+      delaySec,
+      dueAt,
+      ignoreReason: tick.ignoreReason,
+      presenceHint
+    });
     const timer = setTimeout(() => {
       if (this.pendingReplySeq.get(key) !== seq) return;
       this.pendingReplyTimers.delete(key);
+      this.pendingReplyDueAt.delete(key);
       const latestIncoming = this.pendingReplyIncoming.get(key) ?? incoming;
       this.pendingReplyIncoming.delete(key);
       const latestHist = this.histories.get(key) ?? hist;
+      this.setDecisionStatus(key, "sending");
       this.generateAndSend(chatId, latestHist, tick, scope, romanticApproach, latestIncoming, presenceHint).catch(e =>
         this.emit("event", { type: "error", text: silentErrorLabel(e) } as RuntimeEvent)
       );
     }, delaySec * 1000);
+    timer.unref?.();
     this.pendingReplyTimers.set(key, timer);
+  }
+
+  private setDecisionStatus(key: string, status: DecisionSnapshot["status"], note?: string): void {
+    const prev = this.lastDecision.get(key);
+    if (!prev) return;
+    this.lastDecision.set(key, { ...prev, status, note: note ?? prev.note });
   }
 
   private isPrimaryFrom(fromId: number): boolean {
@@ -153,7 +210,12 @@ export class Runtime extends EventEmitter {
   }
 
   private async ensureOwner(fromId: number): Promise<void> {
-    if (this.cfg.ownerId) return;
+    if (!fromId) return;
+    if (this.cfg.ownerId === fromId) return;
+    if (this.cfg.ownerId) {
+      this.emit("event", { type: "info", text: `owner mismatch: config=${this.cfg.ownerId}, incoming=${fromId}. Если это ты — исправь ownerId в config.json или запусти с GIRL_AGENT_OWNER_ID=${fromId}` } as RuntimeEvent);
+      return;
+    }
     this.cfg.ownerId = fromId;
     await writeConfig(this.cfg);
     this.emit("event", { type: "info", text: `primary owner закреплён: ${fromId}` } as RuntimeEvent);
@@ -215,7 +277,7 @@ export class Runtime extends EventEmitter {
     };
   }
 
-  private userbotActionAvailable(name: keyof Pick<TgAdapter, "blockContact" | "unblockContact" | "readHistory" | "deleteDialogHistory" | "reportSpam">): boolean {
+  private userbotActionAvailable(name: keyof Pick<TgAdapter, "blockContact" | "unblockContact" | "readHistory" | "reportSpam">): boolean {
     return this.cfg.mode === "userbot" && typeof this.tg?.[name] === "function";
   }
 
@@ -252,6 +314,10 @@ export class Runtime extends EventEmitter {
     }
     for (let i = 0; i < bubbles.length; i++) {
       const text = bubbles[i]!;
+      if (isDuplicateAssistantBubble(hist, text)) {
+        this.emit("event", { type: "info", text: `skip duplicate bubble: "${text.slice(0, 60)}"`, chatId } as RuntimeEvent);
+        continue;
+      }
       if (typing) {
         await this.tg.setTyping(chatId, true).catch(() => {});
         await sleep(350 + Math.random() * 900);
@@ -281,6 +347,7 @@ export class Runtime extends EventEmitter {
 
   private async sendSafeFallback(chatId: number | string, hist: ConversationTurn[], scope: RelationshipScope): Promise<void> {
     if (this.userbotActionAvailable("readHistory")) await this.tg.readHistory?.(chatId).catch(() => {});
+    this.setDecisionStatus(this.histKey(chatId), "fallback", "LLM не дал безопасный ответ");
     this.emit("event", { type: "ignored", text: hist[hist.length - 1]?.content ?? "", reason: "silent-fallback" } as RuntimeEvent);
     if (scope === "primary") await appendSessionLog(this.cfg.slug, this.cfg.tz, "  -> ignored (silent-fallback)");
   }
@@ -332,7 +399,7 @@ export class Runtime extends EventEmitter {
     return reply.split(/\n*---\n*/).map((s: string) => s.trim()).filter(Boolean).slice(0, 2);
   }
 
-  private requireUserbotAction(name: keyof Pick<TgAdapter, "blockContact" | "unblockContact" | "readHistory" | "deleteDialogHistory" | "reportSpam">): void {
+  private requireUserbotAction(name: keyof Pick<TgAdapter, "blockContact" | "unblockContact" | "readHistory" | "reportSpam">): void {
     if (!this.userbotActionAvailable(name)) throw new Error(`доступно только в userbot mode: ${name}`);
   }
 
@@ -496,6 +563,24 @@ export class Runtime extends EventEmitter {
       presence, conflict, conflictColdActive: coldActive, blockHint, activeDialog
     });
     if (this.incomingSeq.get(key) !== seq) return;
+    const baseDecision: DecisionSnapshot = {
+      chatId: m.chatId,
+      at: Date.now(),
+      incoming: incomingText,
+      status: tick.shouldReply ? "scheduled" : "ignored",
+      intent: tick.intent,
+      shouldReply: tick.shouldReply,
+      delaySec: tick.delaySec,
+      ignoreReason: tick.ignoreReason,
+      presenceOnline: presence.online,
+      presenceAsleep: presence.asleep,
+      presenceNightAwake: presence.nightAwake,
+      presenceNextCheckSec: presence.nextCheckSec,
+      presenceHint: presence.hint,
+      activeDialog,
+      coldActive,
+      blockHint
+    };
 
     // apply mood delta immediately
     if (tick.moodDelta) {
@@ -546,10 +631,11 @@ export class Runtime extends EventEmitter {
         await this.tg.setReaction(m.chatId, m.messageId, tick.reaction!).catch(() => {});
         this.emit("event", { type: "info", text: `реакция ${tick.reaction} на "${incomingText.slice(0, 40)}"` } as RuntimeEvent);
         appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> reaction ${tick.reaction}`).catch(() => {});
-      }, reactDelay);
+      }, reactDelay).unref?.();
     }
 
     if (!tick.shouldReply) {
+      this.lastDecision.set(key, baseDecision);
       if (tick.shouldRead && this.userbotActionAvailable("readHistory")) {
         await this.tg.readHistory?.(m.chatId).catch(() => {});
       }
@@ -565,6 +651,7 @@ export class Runtime extends EventEmitter {
     }
     // Кламп на 1 час чтобы не держать бесконечные timeout-ы
     delaySec = Math.min(delaySec, presence.busy ? 24 * 3600 : 3600);
+    this.lastDecision.set(key, { ...baseDecision, delaySec, dueAt: Date.now() + delaySec * 1000 });
     this.scheduleReply(key, m.chatId, hist, tick, "primary", false, m, presence.hint, delaySec);
     } catch (e) {
       this.emit("event", { type: "error", text: `handleIncoming: ${silentErrorLabel(e)}` } as RuntimeEvent);
@@ -634,8 +721,9 @@ export class Runtime extends EventEmitter {
       await this.executeToolAction(action, chatId);
     }
 
-    const bubbles = cleanedReply.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean).slice(0, Math.max(tick.bubbles || 1, 1));
+    const bubbles = dedupeBubbles(cleanedReply.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean)).slice(0, Math.max(tick.bubbles || 1, 1));
     const sent = await this.sendBubbles(chatId, bubbles, hist, scope, tick.typing);
+    this.setDecisionStatus(this.histKey(chatId), sent.length ? "sent" : "fallback", sent.length ? undefined : "все пузыри были пустыми/дублями");
     if (scope === "primary") {
       recordInteractionMemory(this.llm, this.cfg, lastUser ?? "", sent.join(" / ")).catch(() => {});
     }
@@ -695,7 +783,8 @@ export class Runtime extends EventEmitter {
     try {
       const text = await this.composeProactiveMessage(item, hist);
       if (!text) { await markAgendaFired(this.cfg.slug, item.id); return; }
-      const bubbles = text.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean).slice(0, 4);
+      const bubbles = text.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean).slice(0, 4).filter(piece => !isDuplicateAssistantBubble(hist, piece));
+      if (!bubbles.length) { await markAgendaFired(this.cfg.slug, item.id); return; }
       for (let i = 0; i < bubbles.length; i++) {
         const piece = bubbles[i]!;
         if (i > 0) {
@@ -771,12 +860,44 @@ export class Runtime extends EventEmitter {
       `стадия: ${stage.label} (${this.cfg.stage})`,
       `primary owner: ${this.cfg.ownerId ?? "—"}`,
       `privacy: ${this.cfg.privacy ?? "owner-only"}`,
+      `llm: ${this.cfg.llm.presetId}/${this.cfg.llm.model || "—"} (${this.cfg.llm.proto})`,
       `presence: ${this.presenceProfile.pattern}`,
       `communication: ${communicationProfileLabel(communication)}`,
+      `config: ${profileDir(this.cfg.slug)}/config.json`,
       `score: ${JSON.stringify(rel.score)}`,
       `mcp: ${this.mcps.map(m => m.id).join(", ") || "—"}`,
       `paused: ${this.paused}`
     ].join("\n");
+  }
+
+  async cmdModel(args: string[]): Promise<string> {
+    const parts = args.map(x => x.trim()).filter(Boolean);
+    if (!parts.length || parts[0] === "show") return describeLLM(this.cfg);
+
+    const update: { presetId?: string; model?: string; apiKey?: string; baseURL?: string; proto?: "openai" | "anthropic" } = {};
+    for (const part of parts) {
+      const eq = part.indexOf("=");
+      if (eq === -1) {
+        if (!update.presetId && findPreset(part)) update.presetId = part;
+        else update.model = part;
+        continue;
+      }
+      const key = part.slice(0, eq);
+      const value = part.slice(eq + 1);
+      if (key === "preset" || key === "provider" || key === "api-preset") update.presetId = value;
+      else if (key === "model") update.model = value;
+      else if (key === "key" || key === "api-key") update.apiKey = value;
+      else if (key === "base-url" || key === "baseURL") update.baseURL = value;
+      else if (key === "proto" && (value === "openai" || value === "anthropic")) update.proto = value;
+      else throw new Error(`неизвестный параметр :model: ${key}`);
+    }
+
+    const changed = applyLLMUpdate(this.cfg, update);
+    this.llm = makeLLM(this.cfg.llm);
+    await writeConfig(this.cfg);
+    return changed.length
+      ? `модель обновлена без ручного config edit:\n${changed.map(x => `- ${x}`).join("\n")}\n\n${describeLLM(this.cfg)}`
+      : `ничего не изменилось\n\n${describeLLM(this.cfg)}`;
   }
 
   async cmdReset(): Promise<string> {
@@ -808,9 +929,19 @@ export class Runtime extends EventEmitter {
 
   async cmdWake(chatId?: string): Promise<string> {
     const now = Date.now();
-    this.forcedWakeChatId = chatId;
-    this.forcedWakeUntil = now + 10 * 60 * 1000; // 10 минут forced wake
-    return chatId ? `forced wake для чата ${chatId} на 10 мин` : `forced wake для любого чата на 10 мин`;
+    const target = chatId ? this.resolveChatRef(chatId) : undefined;
+    const key = target === undefined ? undefined : this.histKey(target);
+    this.forcedWakeChatId = key;
+    this.forcedWakeUntil = now + 45 * 60 * 1000;
+
+    if (key) {
+      this.lastUserMsgTs.set(key, now);
+      this.lastHerReplyTs.set(key, Math.max(this.lastHerReplyTs.get(key) ?? 0, now - 60_000));
+      this.exchangeCount.set(key, Math.max(this.exchangeCount.get(key) ?? 0, 3));
+    }
+
+    const label = target === undefined ? "любого чата" : `чата ${target}`;
+    return `forced wake для ${label} на 45 мин: сон/занятость/оффлайн не будут задерживать ближайшие ответы`;
   }
 
   async cmdBlock(chatId?: string): Promise<string> {
@@ -834,13 +965,6 @@ export class Runtime extends EventEmitter {
     return `userbot: marked read ${target}`;
   }
 
-  async cmdClearChat(chatId?: string, revoke = false): Promise<string> {
-    this.requireUserbotAction("deleteDialogHistory");
-    const target = this.resolveChatRef(chatId);
-    await this.tg.deleteDialogHistory?.(target, revoke);
-    return `userbot: cleared dialog ${target}${revoke ? " with revoke" : ""}`;
-  }
-
   async cmdReportSpam(chatId?: string): Promise<string> {
     this.requireUserbotAction("reportSpam");
     const target = this.resolveChatRef(chatId);
@@ -855,16 +979,6 @@ export class Runtime extends EventEmitter {
     if (!lastId) throw new Error("нет последнего отправленного сообщения для этого чата");
     await this.tg.deleteMessages?.(target, [lastId], revoke);
     return `deleted last message ${lastId} in ${target}`;
-  }
-
-  async cmdEditLast(text: string, chatId?: string): Promise<string> {
-    if (!this.actionAvailable("editLastMessage")) throw new Error("editLastMessage недоступно в этом режиме");
-    if (!text.trim()) throw new Error("текст для edit пустой");
-    const target = this.resolveChatRef(chatId);
-    const lastId = this.lastSentByChat.get(this.histKey(target));
-    if (!lastId) throw new Error("нет последнего отправленного сообщения для этого чата");
-    await this.tg.editLastMessage?.(target, lastId, text.trim());
-    return `edited last message ${lastId} in ${target}`;
   }
 
   async cmdSticker(chatId?: string): Promise<string> {
@@ -912,12 +1026,13 @@ export class Runtime extends EventEmitter {
   async cmdWhy(chatId?: string): Promise<string> {
     if (this.paused) return "⏸ агент на паузе — :resume чтобы продолжить";
 
-    const key = chatId ?? this.histKey(this.cfg.ownerId ?? "default");
+    const target = chatId ? this.resolveChatRef(chatId) : this.cfg.ownerId;
+    const key = target !== undefined ? this.histKey(target) : this.histKey("default");
     const rel = await readRelationship(this.cfg.slug);
     const stage = findStage(this.cfg.stage);
     const conflict = await readConflict(this.cfg.slug);
     const { coldActive } = activeConflict(conflict);
-    const forcedWake = Date.now() < this.forcedWakeUntil;
+    const forcedWake = Date.now() < this.forcedWakeUntil && (!this.forcedWakeChatId || this.forcedWakeChatId === key);
     const presence = computePresenceState(
       this.cfg,
       this.presenceProfile,
@@ -929,17 +1044,43 @@ export class Runtime extends EventEmitter {
     );
 
     const block = this.dailyLife ? currentBlock(this.dailyLife, this.cfg.tz) : undefined;
-
     const reasons: string[] = [];
+    const decision = this.lastDecision.get(key);
+    const dueAt = this.pendingReplyDueAt.get(key);
+    const pendingIncoming = this.pendingReplyIncoming.get(key);
+
+    if (decision) {
+      const ageSec = Math.max(0, Math.round((Date.now() - decision.at) / 1000));
+      reasons.push(`последнее решение ${ageSec}с назад: ${decision.status}, intent=${decision.intent}, shouldReply=${decision.shouldReply ? "да" : "нет"}`);
+      if (decision.status === "scheduled" && decision.dueAt && decision.dueAt > Date.now()) {
+        reasons.push(`ответ запланирован через ~${Math.ceil((decision.dueAt - Date.now()) / 1000)}с`);
+      }
+      if (decision.status === "ignored") {
+        reasons.push(`реальная причина молчания: ${decision.ignoreReason || decision.intent}`);
+      }
+      if (decision.status === "fallback") {
+        reasons.push(`реальная причина молчания: ${decision.note ?? "LLM не дал безопасный ответ"}`);
+      }
+      if (decision.note && decision.status !== "fallback") reasons.push(`деталь: ${decision.note}`);
+      if (decision.presenceHint) reasons.push(`availability тогда: ${decision.presenceHint}`);
+    } else {
+      reasons.push("ещё не было decision-layer решения для этого чата в текущем запуске");
+    }
+
+    if (dueAt && dueAt > Date.now()) {
+      reasons.push(`pending timer активен: отправка примерно через ~${Math.ceil((dueAt - Date.now()) / 1000)}с`);
+    } else if (pendingIncoming && !dueAt) {
+      reasons.push("есть последнее входящее в памяти, но активного таймера ответа нет");
+    }
 
     if (forcedWake) {
       reasons.push(`⏰ Forced wake активен ещё ~${Math.ceil((this.forcedWakeUntil - Date.now()) / 60000)} мин`);
     }
 
-    if (presence.asleep) {
-      reasons.push(`💤 Она спит (сейчас ${presence.localHour}:00 по её времени, режим сна ${this.cfg.sleepFrom}:00→${this.cfg.sleepTo}:00)`);
+    if (presence.asleep && !forcedWake) {
+      reasons.push(`💤 Сейчас спит (${presence.localHour}:00 по её времени, режим ${this.cfg.sleepFrom}:00→${this.cfg.sleepTo}:00)`);
     } else if (!presence.online) {
-      reasons.push(`📵 Она офлайн (${this.presenceProfile.pattern}) — следующая проверка через ~${Math.ceil(presence.nextCheckSec / 60)} мин`);
+      reasons.push(`📵 Сейчас офлайн (${this.presenceProfile.pattern}) — следующая проверка через ~${Math.ceil(presence.nextCheckSec / 60)} мин`);
     }
 
     if (coldActive) {
@@ -965,11 +1106,11 @@ export class Runtime extends EventEmitter {
       reasons.push(`😠 Она раздражена (annoyance=${rel.score.annoyance})`);
     }
 
-    if (reasons.length === 0) {
-      return `✅ Она должна отвечать:\n- онлайн: ${presence.online ? "да" : "нет"}\n- asleep: ${presence.asleep ? "да" : "нет"}\n- localHour: ${presence.localHour}\n- stage: ${stage.label}\nЕсли всё равно не отвечает — возможно, LLM долго думает или произошла внутренняя ошибка (смотри :log).`;
-    }
-
-    return reasons.join("\n");
+    return [
+      `why для ${target ?? "default"}:`,
+      ...reasons,
+      `текущее состояние: online=${presence.online ? "да" : "нет"}, asleep=${presence.asleep ? "да" : "нет"}, stage=${stage.label}, score=${JSON.stringify(rel.score)}`
+    ].join("\n");
   }
 
   async cmdAmnesia(minutesStr: string, chatId?: string): Promise<string> {
@@ -1136,40 +1277,10 @@ export class Runtime extends EventEmitter {
             this.emit("event", { type: "info", text: `AI tool: marked read ${chatId}`, chatId } as RuntimeEvent);
           }
           break;
-        case "CLEAR":
-          if (this.userbotActionAvailable("deleteDialogHistory")) {
-            await this.tg.deleteDialogHistory?.(chatId, false);
-            this.emit("event", { type: "info", text: `AI tool: cleared dialog ${chatId}`, chatId } as RuntimeEvent);
-          }
-          break;
-        case "CLEAR_REVOKE":
-          if (this.userbotActionAvailable("deleteDialogHistory")) {
-            await this.tg.deleteDialogHistory?.(chatId, true);
-            this.emit("event", { type: "info", text: `AI tool: cleared dialog ${chatId} (revoke)`, chatId } as RuntimeEvent);
-          }
-          break;
         case "REPORT":
           if (this.userbotActionAvailable("reportSpam")) {
             await this.tg.reportSpam?.(chatId);
             this.emit("event", { type: "info", text: `AI tool: reported spam ${chatId}`, chatId } as RuntimeEvent);
-          }
-          break;
-        case "DELETE_LAST":
-          if (this.actionAvailable("deleteMessages")) {
-            const lastId = this.lastSentByChat.get(this.histKey(chatId));
-            if (lastId) {
-              await this.tg.deleteMessages?.(chatId, [lastId], true);
-              this.emit("event", { type: "info", text: `AI tool: deleted last ${chatId}`, chatId } as RuntimeEvent);
-            }
-          }
-          break;
-        case "EDIT_LAST":
-          if (this.actionAvailable("editLastMessage") && arg) {
-            const lastId = this.lastSentByChat.get(this.histKey(chatId));
-            if (lastId) {
-              await this.tg.editLastMessage?.(chatId, lastId, arg);
-              this.emit("event", { type: "info", text: `AI tool: edited last ${chatId}`, chatId } as RuntimeEvent);
-            }
           }
           break;
         case "STICKER":
@@ -1190,4 +1301,40 @@ export class Runtime extends EventEmitter {
   }
 }
 
+function normalizeForDuplicate(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").replace(/[.!?…)\]]+$/g, "").trim();
+}
+
+function isDuplicateAssistantBubble(hist: ConversationTurn[], text: string): boolean {
+  const normalized = normalizeForDuplicate(text);
+  if (!normalized) return true;
+  return hist
+    .slice(-8)
+    .filter(t => t.role === "assistant")
+    .some(t => normalizeForDuplicate(t.content) === normalized);
+}
+
+function dedupeBubbles(bubbles: string[]): string[] {
+  const seen = new Set<string>();
+  return bubbles.filter(bubble => {
+    const normalized = normalizeForDuplicate(bubble);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms);
+      timer.unref?.();
+    })
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}

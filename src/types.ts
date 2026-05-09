@@ -6,6 +6,15 @@ export type PrivacyMode = "owner-only" | "allow-strangers";
 
 export type Nationality = "RU" | "UA";
 
+export interface TelegramProxyConfig {
+  ip: string;
+  port: number;
+  socksType: 4 | 5;
+  username?: string;
+  password?: string;
+  timeout?: number;
+}
+
 export interface LLMPreset {
   id: string;
   name: string;
@@ -114,6 +123,8 @@ export interface ProfileConfig {
     phone?: string;
     /** Использовать WebSocket через порт 443 вместо TCP на порту 80. Обходит блокировки РФ. По умолчанию true (auto). */
     useWSS?: boolean;
+    /** SOCKS proxy for MTProto userbot mode. Можно задать через GIRL_AGENT_TG_PROXY=socks5://user:pass@host:port. */
+    proxy?: TelegramProxyConfig;
   };
   mcp: { id: string; secrets: Record<string, string> }[];
   ownerId?: number; // tg user id of the human (set on first message in practice / fallback)
@@ -124,6 +135,8 @@ export interface ProfileConfig {
   sleepTo: number;
   /** Вероятность 0..1 что она проснётся ночью на входящее сообщение (без :wake) */
   nightWakeChance: number;
+  /** Склонность к игнору 0..100. Не прямой рандом: используется как вес в behavior-layer. */
+  ignoreTendency?: number;
   /** Стиль общения: "short" — реалистично-краткие ответы, чаще игнор; "warm" — развёрнутые, тёплые, придумывает истории, реже игнорит */
   vibe?: "short" | "warm";
   communication?: CommunicationProfile;

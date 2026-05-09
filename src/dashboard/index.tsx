@@ -52,19 +52,13 @@ export function Dashboard({ runtime }: { runtime: Runtime }) {
     try {
       switch (head) {
         case "status": append(await runtime.cmdStatus()); break;
+        case "model": append(await runtime.cmdModel(rest)); break;
         case "reset": append(await runtime.cmdReset()); setScore({ interest: 0, trust: 0, attraction: 0, annoyance: 0, cringe: 0 }); break;
         case "stage": append(await runtime.cmdSetStage(rest.join(" "))); break;
         case "wake": append(await runtime.cmdWake(rest[0])); break;
         case "debug": append(await runtime.cmdDebug(rest[0])); break;
         case "why": append(await runtime.cmdWhy(rest[0])); break;
         case "amnesia": append(await runtime.cmdAmnesia(rest[0], rest[1])); break;
-        case "block": append(await runtime.cmdBlock(rest[0])); break;
-        case "unblock": append(await runtime.cmdUnblock(rest[0])); break;
-        case "read": append(await runtime.cmdRead(rest[0])); break;
-        case "clear-chat": append(await runtime.cmdClearChat(rest.find(x => !x.startsWith("--")), rest.includes("--revoke"))); break;
-        case "report-spam": append(await runtime.cmdReportSpam(rest[0])); break;
-        case "delete-last": append(await runtime.cmdDeleteLast(rest.find(x => !x.startsWith("--")), !rest.includes("--local"))); break;
-        case "edit-last": append(await runtime.cmdEditLast(rest.join(" "))); break;
         case "sticker": append(await runtime.cmdSticker(rest[0])); break;
         case "pause": runtime.pause(); setPaused(true); append("⏸ pause"); break;
         case "resume": runtime.resume(); setPaused(false); append("▶ resume"); break;
@@ -90,7 +84,7 @@ export function Dashboard({ runtime }: { runtime: Runtime }) {
           append(p.trim() ? p.slice(-Math.max(500, Math.min(limit, 20000))) : `(log/${day}.md пуст или ещё не создан)`);
           break;
         }
-        case "help": append(":status :why :amnesia <мин> [chatId] :reset :stage <id|num> :wake [chatId] :debug [chatId] :pause :resume :cringe :relationship :persona :log [YYYY-MM-DD] [chars] :block [chatId] :unblock [chatId] :read [chatId] :clear-chat [chatId] [--revoke] :report-spam [chatId] :delete-last [chatId] [--local] :edit-last <text> :sticker [chatId] :quit"); break;
+        case "help": append(":status :model [provider] [model=...] [api-key=...] :why :amnesia <мин> [chatId] :reset :stage <id|num> :wake [chatId] :debug [chatId] :pause :resume :cringe :relationship :persona :log [YYYY-MM-DD] [chars] :sticker [chatId] :quit"); break;
         case "quit": case "exit": await runtime.stop(); exit(); break;
         default: append(`неизвестная команда: ${head}`);
       }
@@ -130,7 +124,7 @@ export function Dashboard({ runtime }: { runtime: Runtime }) {
           if (line) await execute(line);
         }} />
       </Box>
-      <Text dimColor>команды: :status :why :amnesia &lt;мин&gt; :reset :stage &lt;id|num&gt; :pause :resume :cringe :persona :log [day] :block :unblock :read :clear-chat :delete-last :edit-last :sticker :quit</Text>
+      <Text dimColor>команды: :status :why :amnesia &lt;мин&gt; :reset :stage &lt;id|num&gt; :pause :resume :cringe :persona :log [day] :sticker :quit</Text>
     </Box>
   );
 }

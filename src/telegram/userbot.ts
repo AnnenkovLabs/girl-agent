@@ -3,7 +3,6 @@ import { StringSession } from "telegram/sessions/index.js";
 import type { ProfileConfig } from "../types.js";
 import type { IncomingMedia, TgAdapter } from "./index.js";
 import { NewMessage } from "telegram/events/index.js";
-import { hasSpoilers, toHtmlWithSpoilers } from "./markdown.js";
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -23,7 +22,8 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
   if (!apiId || !apiHash) throw new Error("API_ID/API_HASH missing for userbot");
 
   const useWSS = cfg.telegram.useWSS !== false;
-  debug(`[userbot] creating TelegramClient (useWSS=${useWSS})…`);
+  const proxy = cfg.telegram.proxy;
+  debug(`[userbot] creating TelegramClient (useWSS=${useWSS}${proxy ? ", proxy=on" : ""})…`);
 
   const client = new TelegramClient(new StringSession(session), apiId, apiHash, {
     connectionRetries: 5,
@@ -31,7 +31,17 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
     retryDelay: 3000,
     autoReconnect: true,
     floodSleepThreshold: 120,
-    useWSS
+    useWSS,
+    proxy: proxy
+      ? {
+          ip: proxy.ip,
+          port: proxy.port,
+          socksType: proxy.socksType,
+          username: proxy.username,
+          password: proxy.password,
+          timeout: proxy.timeout ?? 10
+        }
+      : undefined
   });
   client.onError = async () => { /* swallow _updateLoop ping TIMEOUT noise */ };
   let me: Api.User | null = null;
@@ -57,6 +67,15 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
         if (i === maxAttempts - 1) throw e;
         await new Promise(r => setTimeout(r, 3000 * (i + 1)));
       }
+    }
+  }
+
+  async function readHistoryPeer(peer: Api.TypeInputPeer): Promise<void> {
+    const maxId = 999999999;
+    if (peer.className === "InputPeerChannel" || peer.className === "InputPeerChannelFromMessage") {
+      await client.invoke(new Api.channels.ReadHistory({ channel: peer, maxId }));
+    } else {
+      await client.invoke(new Api.messages.ReadHistory({ peer, maxId }));
     }
   }
 
@@ -91,6 +110,9 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
           const inputChat = await m.getInputChat?.();
           if (inputChat) {
             peerCache.set(chatId, inputChat);
+          }
+          if (isPrivate && inputChat && fromId > 0) {
+            peerCache.set(fromId, inputChat);
           }
           await onMessage({
             text,
@@ -144,32 +166,11 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
     },
     async readHistory(chatId) {
       const entity = await resolvePeer(chatId);
-      // Используем очень большой maxId чтобы прочитать все сообщения (как в markAsRead)
-      const maxId = 999999999;
-      // Проверяем тип entity для каналов
-      if (entity.className === "InputPeerChannel" || entity.className === "InputPeerChannelFromMessage") {
-        await client.invoke(new Api.channels.ReadHistory({ channel: entity, maxId }));
-      } else {
-        await client.invoke(new Api.messages.ReadHistory({ peer: entity, maxId }));
-      }
-    },
-    async deleteDialogHistory(chatId, revoke = false) {
-      const peer = await resolvePeer(chatId);
-      await client.invoke(new Api.messages.DeleteHistory({ peer, maxId: 0, revoke }));
+      await readHistoryPeer(entity);
     },
     async reportSpam(chatId) {
       const peer = await resolvePeer(chatId);
       await client.invoke(new Api.messages.ReportSpam({ peer }));
-    },
-    async editLastMessage(chatId, messageId, text) {
-      const peer = await resolvePeer(chatId);
-      if (hasSpoilers(text)) {
-        try {
-          await client.editMessage(peer, { message: messageId, text: toHtmlWithSpoilers(text), parseMode: 'html' });
-          return;
-        } catch { /* fall through to plain text */ }
-      }
-      await client.editMessage(peer, { message: messageId, text });
     },
     async deleteMessages(chatId, messageIds, revoke = false) {
       const peer = await resolvePeer(chatId);

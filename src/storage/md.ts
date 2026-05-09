@@ -1,18 +1,36 @@
 import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import type { ProfileConfig, RelationshipScore } from "../types.js";
-import { normalizeCommunicationProfile } from "../presets/communication.js";
+import { normalizeCommunicationProfile, normalizeIgnoreTendency } from "../presets/communication.js";
 
 /**
  * Корневая директория профилей.
  *
  * Можно переопределить через `GIRL_AGENT_DATA` (используется десктоп-обвязкой,
  * чтобы хранить данные в `%APPDATA%/girl-agent/data` или `~/.local/share/...`).
- * По-умолчанию — `./data` относительно cwd, как раньше.
+ * По-умолчанию:
+ * - в исходниках проекта — `./data`;
+ * - при запуске через npx/глобальный бинарь из произвольной папки — XDG data dir.
  */
 export const DATA_ROOT = process.env.GIRL_AGENT_DATA
   ? path.resolve(process.env.GIRL_AGENT_DATA)
-  : path.resolve(process.cwd(), "data");
+  : defaultDataRoot();
+
+function defaultDataRoot(): string {
+  const cwd = process.cwd();
+  if (looksLikeProjectRoot(cwd)) return path.resolve(cwd, "data");
+  const xdg = process.env.XDG_DATA_HOME
+    ? path.resolve(process.env.XDG_DATA_HOME)
+    : path.join(os.homedir(), ".local", "share");
+  return path.join(xdg, "girl-agent", "data");
+}
+
+function looksLikeProjectRoot(dir: string): boolean {
+  return existsSync(path.join(dir, "package.json")) &&
+    (existsSync(path.join(dir, "src")) || existsSync(path.join(dir, "dist")));
+}
 
 export function profileDir(slug: string): string {
   return path.join(DATA_ROOT, slug);
@@ -50,6 +68,8 @@ export async function readConfig(slug: string): Promise<ProfileConfig | null> {
     const raw = await fs.readFile(path.join(profileDir(slug), "config.json"), "utf8");
     const parsed = JSON.parse(raw) as Partial<ProfileConfig>;
     const communication = normalizeCommunicationProfile(parsed);
+    const ownerId = normalizeOwnerId(parsed.ownerId);
+    const ignoreTendency = normalizeIgnoreTendency(parsed.ignoreTendency);
     return {
       sleepFrom: 23,
       sleepTo: 8,
@@ -57,6 +77,8 @@ export async function readConfig(slug: string): Promise<ProfileConfig | null> {
       privacy: "owner-only",
       busySchedule: [],
       ...parsed,
+      ownerId,
+      ignoreTendency,
       communication
     } as ProfileConfig;
   } catch {
@@ -66,12 +88,33 @@ export async function readConfig(slug: string): Promise<ProfileConfig | null> {
 
 export async function writeConfig(cfg: ProfileConfig): Promise<void> {
   await ensureProfile(cfg.slug);
+  const ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.GIRL_AGENT_OWNER_ID);
+  const normalized = ownerId === undefined
+    ? { ...cfg, ownerId: undefined, ignoreTendency: normalizeIgnoreTendency(cfg.ignoreTendency) }
+    : { ...cfg, ownerId, ignoreTendency: normalizeIgnoreTendency(cfg.ignoreTendency) };
   await fs.writeFile(
     path.join(profileDir(cfg.slug), "config.json"),
-    JSON.stringify(cfg, null, 2),
+    JSON.stringify(normalized, null, 2),
     "utf8"
   );
 }
+
+export async function deleteProfile(slug: string): Promise<void> {
+  if (!slug || slug.includes("/") || slug.includes("\\") || slug === "." || slug === "..") {
+    throw new Error(`некорректный slug профиля: ${slug}`);
+  }
+  await fs.rm(profileDir(slug), { recursive: true, force: true });
+}
+
+export function normalizeOwnerId(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
 
 export async function listProfiles(): Promise<string[]> {
   try {

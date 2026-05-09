@@ -2,22 +2,28 @@ name: Auto-release (hourly)
 
 on:
   schedule:
-    - cron: "0 * * * *" # каждый час
-  workflow_dispatch: # ручной запуск
+    - cron: "0 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
-  actions: write # для workflow_dispatch других workflows
+  actions: write
+  models: read
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
 
 jobs:
   release:
     name: Check for changes and release
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # полная история для тегов
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -26,8 +32,10 @@ jobs:
 
       - name: Check for new commits since last tag
         id: check
+        shell: bash
         run: |
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
           if [ -z "$LAST_TAG" ]; then
             echo "No previous tags found"
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
@@ -35,26 +43,130 @@ jobs:
           fi
 
           COMMIT_COUNT=$(git rev-list "${LAST_TAG}..HEAD" --count)
+
           if [ "$COMMIT_COUNT" -eq 0 ]; then
             echo "No new commits since $LAST_TAG"
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "$COMMIT_COUNT new commit(s) since $LAST_TAG"
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            git log "${LAST_TAG}..HEAD" --pretty=format:'- %s' > /tmp/commits.txt
+            exit 0
           fi
+
+          echo "$COMMIT_COUNT new commit(s) since $LAST_TAG"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+
+          git log "${LAST_TAG}..HEAD" --pretty=format:'- %s' > /tmp/commits.txt
 
       - name: Bump patch version
         if: steps.check.outputs.has_changes == 'true'
         id: bump
+        shell: bash
         run: |
           npm version patch --no-git-tag-version
           NEW_VERSION=$(node -p "require('./package.json').version")
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "Bumped to $NEW_VERSION"
 
+      - name: Generate changelog entry
+        if: steps.check.outputs.has_changes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          COMMITS=$(cat /tmp/commits.txt)
+
+          generate_fallback() {
+            grep -v -E '^- (Merge pull request|Merge branch|chore\(release\))' /tmp/commits.txt \
+              | sed -E 's/^- (feat|fix|chore|docs|refactor|perf|style|test|ci)(\([^)]+\))?: /- /' \
+              > /tmp/changelog_entry.txt || true
+
+            if [ ! -s /tmp/changelog_entry.txt ]; then
+              cp /tmp/commits.txt /tmp/changelog_entry.txt
+            fi
+          }
+
+          cat > /tmp/prompt.txt << 'PROMPT_EOF'
+          Ты — автор changelog для open-source проекта "girl-agent" — ИИ-движка для Telegram, имитирующего девушку-собеседницу.
+
+          Из списка сырых git-коммитов сгенерируй красивую секцию changelog.
+
+          Правила:
+          - Пиши на русском
+          - Группируй по категориям с эмодзи, но используй только категории, где реально есть изменения:
+            🚀 Новое
+            🐛 Исправления
+            🔧 Улучшения
+            📝 Документация
+          - Пропускай merge-коммиты и chore(release) коммиты
+          - Убирай PR-номера, имена веток и технические префиксы: feat:, fix:, chore:, refactor:, ci:
+          - Переписывай пункты человеческим, понятным языком
+          - Каждый пункт начинай с "- "
+          - Объединяй похожие или дублирующиеся изменения
+          - Не добавляй заголовок версии, дату, вступление или заключение
+          - Между категориями оставляй пустую строку
+          PROMPT_EOF
+
+          printf '\nКоммиты:\n%s\n' "$COMMITS" >> /tmp/prompt.txt
+          PROMPT=$(cat /tmp/prompt.txt)
+
+          call_model() {
+            local model="$1"
+
+            JSON_BODY=$(jq -n --arg model "$model" --arg prompt "$PROMPT" '{
+              model: $model,
+              messages: [
+                {
+                  role: "user",
+                  content: $prompt
+                }
+              ]
+            }')
+
+            HTTP_RESPONSE=$(curl -sS -L -w "\n%{http_code}" \
+              "https://models.github.ai/inference/chat/completions" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_BODY" || true)
+
+            HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1)
+            BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              AI_CHANGELOG=$(echo "$BODY" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+
+              if [ -n "$AI_CHANGELOG" ] && [ "$AI_CHANGELOG" != "null" ]; then
+                echo "$AI_CHANGELOG" \
+                  | sed '/^```/d' \
+                  > /tmp/changelog_entry.txt
+
+                echo "AI changelog generated with $model"
+                return 0
+              fi
+            fi
+
+            echo "Model $model failed with HTTP $HTTP_CODE"
+            echo "$BODY" | head -c 2000
+            echo ""
+            return 1
+          }
+
+          # Основная модель. Если у аккаунта/репозитория нет доступа к GPT-5 mini,
+          # автоматически пробуем более доступную модель.
+          if call_model "openai/gpt-5-mini"; then
+            exit 0
+          fi
+
+          if call_model "openai/gpt-4.1-mini"; then
+            exit 0
+          fi
+
+          echo "GitHub Models API unavailable, using cleaned commits"
+          generate_fallback
+
       - name: Update CHANGELOG.md
         if: steps.check.outputs.has_changes == 'true'
+        shell: bash
         run: |
           VERSION="${{ steps.bump.outputs.version }}"
           DATE=$(date -u +%Y-%m-%d)
@@ -66,19 +178,25 @@ jobs:
             echo ""
             echo "Дата: ${DATE}"
             echo ""
-            cat /tmp/commits.txt
+            cat /tmp/changelog_entry.txt
             echo ""
-            # старый changelog без первой строки "# Changelog"
-            tail -n +2 CHANGELOG.md
+
+            if [ -f CHANGELOG.md ]; then
+              tail -n +2 CHANGELOG.md
+            fi
           } > CHANGELOG.tmp
+
           mv CHANGELOG.tmp CHANGELOG.md
 
       - name: Commit, tag, and push
         if: steps.check.outputs.has_changes == 'true'
+        shell: bash
         run: |
           VERSION="${{ steps.bump.outputs.version }}"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add package.json package-lock.json CHANGELOG.md
           git commit -m "chore(release): v${VERSION}"
           git tag "v${VERSION}"
@@ -88,10 +206,10 @@ jobs:
         if: steps.check.outputs.has_changes == 'true'
         run: gh workflow run "Publish docker image" --ref master
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
 
       - name: Trigger npm publish
         if: steps.check.outputs.has_changes == 'true'
         run: gh workflow run "Publish to npm" --ref master
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}

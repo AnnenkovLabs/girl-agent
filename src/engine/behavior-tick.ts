@@ -1,7 +1,7 @@
 import type { LLMClient } from "../llm/index.js";
 import type { BehaviorTickResult, CommunicationProfile, ProfileConfig } from "../types.js";
 import { findStage } from "../presets/stages.js";
-import { communicationDecisionState, normalizeCommunicationProfile } from "../presets/communication.js";
+import { communicationDecisionState, ignoreTendencyPrompt, normalizeCommunicationProfile, normalizeIgnoreTendency } from "../presets/communication.js";
 import { readRelationship } from "../storage/md.js";
 import type { PresenceState } from "./presence.js";
 import type { ConflictState } from "./conflict.js";
@@ -86,6 +86,7 @@ ${reactionsHint}
 - Если communication.notifications=priority — она чаще видит именно его уведомления; без сна/конфликта не превращай каждое офлайн-состояние в игнор.
 - Если communication.messageStyle=bursty — bubbles 2..5 нормальны даже на обычный ответ. Если one-liners — bubbles чаще 1.
 - Если communication.lifeSharing=high — уместно чаще выбрать normal reply, где она может поделиться своим моментом из жизни.
+- В русскоязычном Telegram одиночная ")" в конце ЕГО сообщения обычно означает улыбку/лёгкую теплоту, а не холод и не "неинтересно". Не повышай annoyance/cringe только из-за ")".
 - Если стадия "tg-given-cold" и сообщение скучное/невнятное — высокая вероятность ignore или left-on-read.
 - Если в сообщении кринж/токсик/нарушение boundaries — annoyance растёт, может быть ignore или leave-chat.
 - Если милое/уместное на тёплой стадии — interest и attraction +.
@@ -105,7 +106,8 @@ export async function behaviorTick(
   const stage = findStage(cfg.stage);
   const rel = await readRelationship(cfg.slug);
   const communication = normalizeCommunicationProfile(cfg);
-  const state = `stage=${cfg.stage} (${stage.label})\nscore=${JSON.stringify(rel.score)}\nbase_ignore=${stage.defaults.ignoreChance}\nbase_delay=${stage.defaults.replyDelaySec.join("..")}s\n${communicationDecisionState(communication)}`;
+  const ignoreTendency = normalizeIgnoreTendency(cfg.ignoreTendency);
+  const state = `stage=${cfg.stage} (${stage.label})\nscore=${JSON.stringify(rel.score)}\nbase_ignore=${stage.defaults.ignoreChance}\nbase_delay=${stage.defaults.replyDelaySec.join("..")}s\n${communicationDecisionState(communication)}\n${ignoreTendencyPrompt(ignoreTendency)}`;
   const reactionsHint = reactionMenu(cfg.stage, rel.score);
 
   const history = recentHistory.slice(-8)
@@ -140,7 +142,7 @@ export async function behaviorTick(
   }
 
   // warm vibe — снижает шанс случайного игнора
-  const ignoreMul = ignoreMultiplier(communication);
+  const ignoreMul = ignoreMultiplier(communication, ignoreTendency);
 
   // если СПИТ — игнор почти всегда
   const sleepIgnoreMul = communication.notifications === "priority" ? 0.8 : communication.notifications === "muted" ? 1 : 0.9;
@@ -210,7 +212,7 @@ export async function behaviorTick(
     let delaySec = parsed.delaySec ?? 30;
     let bubbles = parsed.bubbles ?? sampleBubbles(communication, false);
 
-    if (!shouldReply && canRecoverReply(cfg.stage, rel.score, ctx) && Math.random() < recoverReplyChance(communication, rel.score)) {
+    if (!shouldReply && canRecoverReply(cfg.stage, rel.score, ctx) && Math.random() < recoverReplyChance(communication, rel.score, ignoreTendency)) {
       shouldReply = true;
       intent = communication.messageStyle === "one-liners" ? "short" : "reply";
       delaySec = recoverDelay(communication, ctx);
@@ -261,11 +263,12 @@ function sanitizeReaction(emoji: string, stage: string, score: { attraction: num
   return emoji;
 }
 
-function ignoreMultiplier(profile: CommunicationProfile): number {
+function ignoreMultiplier(profile: CommunicationProfile, ignoreTendency: number): number {
   let mul = profile.notifications === "priority" ? 0.3 : profile.notifications === "muted" ? 1.15 : 0.75;
   if (profile.initiative === "high") mul *= 0.75;
   if (profile.lifeSharing === "high") mul *= 0.85;
   if (profile.messageStyle === "one-liners" && profile.initiative === "low") mul *= 1.15;
+  mul *= 0.35 + normalizeIgnoreTendency(ignoreTendency) / 35;
   return mul;
 }
 
@@ -299,11 +302,12 @@ function canRecoverReply(stage: string, score: { interest: number; attraction: n
   return true;
 }
 
-function recoverReplyChance(profile: CommunicationProfile, score: { interest: number; attraction: number; annoyance: number }): number {
+function recoverReplyChance(profile: CommunicationProfile, score: { interest: number; attraction: number; annoyance: number }, ignoreTendency: number): number {
   let chance = profile.notifications === "priority" ? 0.72 : profile.notifications === "muted" ? 0.16 : 0.38;
   if (profile.initiative === "high") chance += 0.16;
   if (profile.initiative === "low") chance -= 0.1;
   if (profile.lifeSharing === "high") chance += 0.08;
+  chance -= (normalizeIgnoreTendency(ignoreTendency) - 35) / 100;
   if (score.interest > 40) chance += 0.12;
   if (score.attraction > 50) chance += 0.1;
   if (score.annoyance > 30) chance -= 0.2;

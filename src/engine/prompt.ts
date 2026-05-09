@@ -8,7 +8,7 @@ import { realismPromptFragment, type RealismContext } from "./realism.js";
 import { mediaPromptFragment } from "./media.js";
 import type { IncomingMedia } from "../telegram/index.js";
 import { findStage } from "../presets/stages.js";
-import { communicationPromptFragment, normalizeCommunicationProfile } from "../presets/communication.js";
+import { communicationPromptFragment, ignoreTendencyPrompt, normalizeCommunicationProfile } from "../presets/communication.js";
 
 export type RelationshipScope = "primary" | "acquaintance";
 
@@ -91,6 +91,7 @@ const ANTI_AI_RULES = `# КРИТИЧЕСКИ ВАЖНО — РОЛЬ
 - "здарова" — только если она реально дерзкая и пацанистая по persona, иначе не подходит
 - НЕ используй: "хай" (устаревший кальк), "йоу" (звучит как 40-летний рэпер), "хей", "халоу", "приветствую", "доброго времени суток", "салам" (если не указано в persona), "здраствуйте"
 Та же логика для всех ответов: точка в конце короткого сообщения = строго/обижена; ")" = тёплое; "))" = флирт/намёк; "..." = задумалась/недовольна; без знаков = нейтрально или лень.
+Когда ОН пишет сообщение с ")" в конце, это обычно русскоязычная улыбка/смягчение тона, не признак скуки и не "ему неинтересно". Оценивай смысл сообщения, а не считай ")" холодом.
 В одном пузыре ставь МАКСИМУМ один знак "(", "!", "?", "...". Не сочетай "?!" — это кринж.
 
 # СМЕХ (важная микро-механика)
@@ -268,6 +269,7 @@ ${ctx.romanticApproach ? `Последнее сообщение выглядит
     : "";
 
   const communicationFragment = communicationPromptFragment(communication);
+  const ignoreTendency = ignoreTendencyPrompt(cfg.ignoreTendency);
 
   // Userbot tools available to AI
   const userbotTools = cfg.mode === "userbot" ? `# ДОСТУПНЫЕ ДЕЙСТВИЯ (userbot)
@@ -275,18 +277,14 @@ ${ctx.romanticApproach ? `Последнее сообщение выглядит
 - [BLOCK] — заблокировать пользователя
 - [UNBLOCK] — разблокировать пользователя
 - [READ] — отметить сообщения прочитанными (left-on-read)
-- [CLEAR] — очистить историю чата для себя
-- [CLEAR_REVOKE] — очистить историю для всех
 - [REPORT] — пожаловаться на спам
-- [DELETE_LAST] — удалить своё последнее сообщение
-- [EDIT_LAST:текст] — отредактировать своё последнее сообщение
 - [STICKER] — отправить стикер вместо текста (если не хочешь писать)
 Маркер должен быть в начале, затем перенос строки, затем твой ответ (если нужен). Можно использовать несколько маркеров подряд.
 Пример: "[READ]\n[BLOCK]\nты задолбал"` : "";
 
   return [
     ANTI_AI_RULES,
-    communicationFragment,
+    `${communicationFragment}\n\n${ignoreTendency}`,
     `# ТЫ — ${cfg.name}, ${cfg.age}, ${cfg.nationality === "UA" ? "Украина" : "Россия / СНГ"}`,
     ctx.tgUsername || ctx.tgDisplayName ? `# Твой аккаунт в ТГ${ctx.tgUsername ? `\nТвой юзернейм в тг: @${ctx.tgUsername.replace(/^@/, "")}` : ""}${ctx.tgDisplayName ? `\nТвоё отображаемое имя в тг: ${ctx.tgDisplayName}` : ""}\nУчти: имя персоны (${cfg.name}) и отображаемое имя в тг могут отличаться.` : "",
     `Часовой пояс: ${cfg.tz}. У тебя сейчас: ${localTime}. Паттерн присутствия в тг: ${presenceProfile.pattern}. Учитывай — глубокая ночь = либо спишь и не отвечаешь, либо тревожно. Утро = вяло. День/вечер = активна.`,

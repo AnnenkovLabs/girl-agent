@@ -1,6 +1,7 @@
 import type { LLMClient } from "../llm/index.js";
 import { writeMd } from "../storage/md.js";
 import type { BusySlot, Weekday } from "../types.js";
+import { sanitizeModelReply } from "./security.js";
 
 const SYS = `Ты — режиссёр персонажей. Твоя задача — сгенерировать достоверный, не-голливудский, не-сладкий, не-AI-помощниковый профиль обычной русскоязычной девушки указанного возраста. Без приукрашиваний, без позитивного морального уклона, без «удобной» персоны. Допустимы недостатки, узкие интересы, скепсис, токсичность, лень, тревожность, неуверенность — что подходит возрасту. Никаких «коучинговых» формулировок. Только живая речь, как из дневника или внутреннего монолога. Возраст: {{age}} лет, имя: {{name}}.`;
 
@@ -160,11 +161,11 @@ export async function generatePersonaPack(
 - Без markdown, только JSON.`;
 
   onProgress?.(5, "генерируем persona.md…");
-  const persona = await llm.chat([{ role: "system", content: sys }, { role: "user", content: personaPrompt }], { temperature: 0.95, maxTokens: 3500 });
+  const persona = sanitizeProfileText(await llm.chat([{ role: "system", content: sys }, { role: "user", content: personaPrompt }], { temperature: 0.95, maxTokens: 3500 }));
   onProgress?.(35, "генерируем speech.md…");
-  const speech = await llm.chat([{ role: "system", content: sys }, { role: "user", content: speechPrompt }], { temperature: 0.9, maxTokens: 3500 });
+  const speech = sanitizeProfileText(await llm.chat([{ role: "system", content: sys }, { role: "user", content: speechPrompt }], { temperature: 0.9, maxTokens: 3500 }));
   onProgress?.(65, "генерируем communication.md…");
-  const boundaries = await llm.chat([{ role: "system", content: sys }, { role: "user", content: boundariesPrompt }], { temperature: 0.9, maxTokens: 3500 });
+  const boundaries = sanitizeProfileText(await llm.chat([{ role: "system", content: sys }, { role: "user", content: boundariesPrompt }], { temperature: 0.9, maxTokens: 3500 }));
   onProgress?.(85, "генерируем busy schedule…");
   const routineRaw = await llm.chat([{ role: "system", content: sys }, { role: "user", content: routinePrompt }], { temperature: 0.85, maxTokens: 3500, json: true, jsonSchema: BUSY_SCHEDULE_SCHEMA });
 
@@ -175,6 +176,14 @@ export async function generatePersonaPack(
   await writeMd(slug, "communication.md", boundaries);
 
   return { persona, speech, boundaries, busySchedule };
+}
+
+function sanitizeProfileText(text: string): string {
+  const cleaned = sanitizeModelReply(text)
+    .replace(/[^\S\r\n]{2,}/g, " ")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+  return cleaned || text.trim();
 }
 
 function parseBusySchedule(raw: string, name: string, age: number): BusySlot[] {

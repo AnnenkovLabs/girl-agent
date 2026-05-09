@@ -49,19 +49,13 @@ export async function runHeadlessJsonEvents(rt: Runtime): Promise<void> {
       let text = "";
       switch (head) {
         case "status": text = await rt.cmdStatus(); break;
+        case "model": text = await rt.cmdModel(rest); break;
         case "reset": text = await rt.cmdReset(); break;
         case "stage": text = await rt.cmdSetStage(rest.join(" ")); break;
         case "wake": text = await rt.cmdWake(rest[0]); break;
         case "debug": text = await rt.cmdDebug(rest[0]); break;
         case "why": text = await rt.cmdWhy(rest[0]); break;
         case "amnesia": text = await rt.cmdAmnesia(rest[0], rest[1]); break;
-        case "block": text = await rt.cmdBlock(rest[0]); break;
-        case "unblock": text = await rt.cmdUnblock(rest[0]); break;
-        case "read": text = await rt.cmdRead(rest[0]); break;
-        case "clear-chat": text = await rt.cmdClearChat(rest.find(x => !x.startsWith("--")), rest.includes("--revoke")); break;
-        case "report-spam": text = await rt.cmdReportSpam(rest[0]); break;
-        case "delete-last": text = await rt.cmdDeleteLast(rest.find(x => !x.startsWith("--")), !rest.includes("--local")); break;
-        case "edit-last": text = await rt.cmdEditLast(rest.join(" ")); break;
         case "sticker": text = await rt.cmdSticker(rest[0]); break;
         case "pause": rt.pause(); paused = true; text = "⏸ pause"; break;
         case "resume": rt.resume(); paused = false; text = "▶ resume"; break;
@@ -101,7 +95,7 @@ export async function runHeadlessJsonEvents(rt: Runtime): Promise<void> {
           return;
         }
         case "help":
-          text = ":status :why :amnesia :reset :stage :wake :debug :pause :resume :cringe :relationship :persona :log :block :unblock :read :clear-chat :report-spam :delete-last :edit-last :sticker :snapshot :quit";
+          text = ":status :model :why :amnesia :reset :stage :wake :debug :pause :resume :cringe :relationship :persona :log :sticker :snapshot :quit";
           break;
         case "quit":
         case "exit":
