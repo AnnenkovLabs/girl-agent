@@ -164,7 +164,7 @@ install_termux() {
     if command -v pkg >/dev/null 2>&1; then
       # Игнорируем ошибку update (например, если зеркало недоступно), но пытаемся установить nodejs
       pkg update -y || warn "pkg update завершился с ошибкой, продолжаю установку..."
-      pkg install -y nodejs || warn "pkg install nodejs завершился с ошибкой"
+      pkg install -y nodejs-lts || warn "pkg install nodejs-lts завершился с ошибкой"
     else
       warn "команда pkg не найдена, не могу установить nodejs"
     fi
@@ -191,7 +191,7 @@ install_termux() {
   say "ставлю @thesashadev/girl-agent@${PKG_VERSION} в ${PREFIX}/lib..."
   mkdir -p "$PREFIX/lib"
   
-  if ! "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --loglevel error "@thesashadev/girl-agent@${PKG_VERSION}"; then
+  if ! "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --no-optional --loglevel error "@thesashadev/girl-agent@${PKG_VERSION}"; then
     warn "Возможные причины ошибки в Termux:"
     warn "1. Нехватка памяти (OOM) — закройте тяжелые приложения в фоне Android."
     warn "2. Отсутствие нужных библиотек. Читайте ошибку выше (обычно node-gyp rebuild failed)."
