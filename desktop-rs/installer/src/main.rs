@@ -27,7 +27,7 @@ use rand::Rng;
 use crate::config::{NameMode, UserbotAuthSource, WizardData};
 use crate::data::{find_llm_preset, pick_random_name, search_tz, default_tz_for_nationality, NAMES_RU, NAMES_UA};
 use crate::install::{InstallProgress, InstallStage};
-use crate::ui::{InstallOutcome, Msg, Step, TgAuthSuccess, TgVerifyOutcome};
+use crate::ui::{InstallOutcome, Msg, PasteTarget, Step, TgAuthSuccess, TgVerifyOutcome};
 
 fn main() -> iced::Result {
     install_panic_hook();
@@ -68,15 +68,36 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
+        let mut subs = Vec::new();
+
         if self.model.installing {
-            iced::time::every(Duration::from_millis(80)).map(|_| Msg::InstallProgressTick(InstallProgress {
+            subs.push(iced::time::every(Duration::from_millis(80)).map(|_| Msg::InstallProgressTick(InstallProgress {
                 stage: InstallStage::Start,
                 fraction: -1.0,
                 note: String::new(),
-            }))
-        } else {
-            Subscription::none()
+            })));
         }
+
+        // Global keyboard shortcut for Paste (works regardless of keyboard layout)
+        subs.push(iced::keyboard::on_key_press(|key, modifiers| {
+            use iced::keyboard;
+            let is_v = match key {
+                keyboard::Key::Character(c) => {
+                    let c = c.as_str();
+                    c == "v" || c == "V" || c == "м" || c == "М"
+                }
+                _ => false,
+            };
+            // On Windows, command() is usually Ctrl, but we check both just in case
+            if (modifiers.command() || modifiers.control()) && is_v {
+                tracing::info!("Global Paste detected!");
+                Some(Msg::GlobalPaste)
+            } else {
+                None
+            }
+        }));
+
+        Subscription::batch(subs)
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
@@ -366,6 +387,39 @@ impl App {
                 paste_into(&mut self.model.data, &mut self.model.tz_query, target, value);
                 Task::none()
             }
+            Msg::GlobalPaste => {
+                let target = match self.model.step {
+                    Step::TgBotToken => Some(PasteTarget::TgToken),
+                    Step::TgUserbotApi => {
+                        // In API screen we have two fields. 
+                        // If ID is empty, paste there, otherwise paste to Hash.
+                        if self.model.data.tg_api_id.is_empty() {
+                            Some(PasteTarget::TgApiId)
+                        } else {
+                            Some(PasteTarget::TgApiHash)
+                        }
+                    }
+                    Step::TgUserbotPhone => Some(PasteTarget::TgPhone),
+                    Step::TgUserbotCode => Some(PasteTarget::TgCode),
+                    Step::TgUserbot2Fa => Some(PasteTarget::Tg2Fa),
+                    Step::LlmConfig => {
+                        // If key is required and empty, paste key. Otherwise base URL.
+                        if self.model.data.llm_api_key.is_empty() {
+                            Some(PasteTarget::LlmKey)
+                        } else {
+                            Some(PasteTarget::LlmBaseUrl)
+                        }
+                    }
+                    Step::Persona => Some(PasteTarget::TzQuery),
+                    Step::Notes => Some(PasteTarget::Notes),
+                    _ => None,
+                };
+                if let Some(t) = target {
+                    tracing::info!("Smart-pasting into {:?}", t);
+                    return iced::clipboard::read().map(move |s| Msg::PasteContent(t, s));
+                }
+                Task::none()
+            }
 
             // Style
             Msg::StageChanged(v) => {
@@ -537,9 +591,15 @@ fn prev_step(s: Step, d: &WizardData) -> Step {
 }
 
 fn window_settings() -> iced::window::Settings {
+    let icon = iced::window::icon::from_file_data(
+        include_bytes!("../assets/icon.png"),
+        None,
+    ).ok();
+
     iced::window::Settings {
         size: iced::Size::new(820.0, 720.0),
         min_size: Some(iced::Size::new(720.0, 600.0)),
+        icon,
         ..iced::window::Settings::default()
     }
 }

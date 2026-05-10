@@ -120,6 +120,7 @@ pub enum Msg {
     // Clipboard paste (works with Russian keyboard layout)
     PasteRequest(PasteTarget),
     PasteContent(PasteTarget, Option<String>),
+    GlobalPaste,
 
     // Install
     StartInstall,

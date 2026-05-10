@@ -54,9 +54,28 @@ pub struct InstallReport {
 
 pub fn run(data: &WizardData, progress: Sender<InstallProgress>) -> Result<InstallReport> {
     let mut log = String::new();
-    let runtime_dir = paths::runtime_dir();
+    let final_runtime_dir = paths::runtime_dir();
     let data_root = paths::data_dir();
-    fs::create_dir_all(&runtime_dir).with_context(|| format!("create {}", runtime_dir.display()))?;
+
+    // Use a temporary directory for unpacking to ensure atomicity.
+    // If unpacking fails, we won't leave a broken "runtime" folder.
+    let temp_runtime_dir = final_runtime_dir.with_extension("tmp");
+    if temp_runtime_dir.exists() {
+        let _ = fs::remove_dir_all(&temp_runtime_dir);
+    }
+    fs::create_dir_all(&temp_runtime_dir)
+        .with_context(|| format!("create {}", temp_runtime_dir.display()))?;
+
+    // Ensure temp dir is cleaned up if we return early with an error.
+    struct CleanupGuard(PathBuf);
+    impl Drop for CleanupGuard {
+        fn drop(&mut self) {
+            if self.0.exists() {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+    let cleanup = CleanupGuard(temp_runtime_dir.clone());
 
     let _ = progress.send(InstallProgress {
         stage: InstallStage::Start,
@@ -64,12 +83,13 @@ pub fn run(data: &WizardData, progress: Sender<InstallProgress>) -> Result<Insta
         note: "подготовка…".into(),
     });
 
-    log.push_str(&format!("runtime dir: {}\n", runtime_dir.display()));
+    log.push_str(&format!("final runtime dir: {}\n", final_runtime_dir.display()));
+    log.push_str(&format!("temp runtime dir:  {}\n", temp_runtime_dir.display()));
     log.push_str(&format!("data dir:    {}\n", data_root.display()));
 
     let node_name = if cfg!(target_os = "windows") { "node.exe" } else { "node" };
-    let node_path = runtime_dir.join(node_name);
-    let cli_path = runtime_dir.join("cli.js");
+    let node_path = final_runtime_dir.join(node_name);
+    let cli_path = final_runtime_dir.join("cli.js");
 
     if NODE_EXE_XZ.is_empty() {
         log.push_str("[skip] embed-runtime feature off — runtime not extracted\n");
@@ -81,14 +101,17 @@ pub fn run(data: &WizardData, progress: Sender<InstallProgress>) -> Result<Insta
         });
         let bytes = decompress_xz(NODE_EXE_XZ)?;
         log.push_str(&format!("decompressed node.exe: {} MB\n", bytes.len() / 1_000_000));
-        fs::write(&node_path, &bytes)
-            .with_context(|| format!("write {}", node_path.display()))?;
+        
+        let temp_node_path = temp_runtime_dir.join(node_name);
+        fs::write(&temp_node_path, &bytes)
+            .with_context(|| format!("write {}", temp_node_path.display()))?;
+        
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut p = fs::metadata(&node_path)?.permissions();
+            let mut p = fs::metadata(&temp_node_path)?.permissions();
             p.set_mode(0o755);
-            fs::set_permissions(&node_path, p)?;
+            fs::set_permissions(&temp_node_path, p)?;
         }
 
         let _ = progress.send(InstallProgress {
@@ -102,8 +125,36 @@ pub fn run(data: &WizardData, progress: Sender<InstallProgress>) -> Result<Insta
         let mut archive = tar::Archive::new(cursor);
         archive.set_overwrite(true);
         archive
-            .unpack(&runtime_dir)
-            .with_context(|| format!("unpack runtime tar to {}", runtime_dir.display()))?;
+            .unpack(&temp_runtime_dir)
+            .with_context(|| format!("unpack runtime tar to {}", temp_runtime_dir.display()))?;
+
+        // panic!("test crash"); // <--- for test uncomment this !
+
+        // Unpacking finished successfully. Now perform the atomic swap.
+        let _ = progress.send(InstallProgress {
+            stage: InstallStage::UnpackRuntime,
+            fraction: 0.75,
+            note: "финализация рантайма…".into(),
+        });
+
+        // On Windows, we can't rename if files are open. We try to move existing to .old first.
+        let old_runtime_dir = final_runtime_dir.with_extension("old");
+        if old_runtime_dir.exists() {
+            let _ = fs::remove_dir_all(&old_runtime_dir);
+        }
+        if final_runtime_dir.exists() {
+            fs::rename(&final_runtime_dir, &old_runtime_dir)
+                .with_context(|| "failed to move existing runtime to .old (is the bot running?)")?;
+        }
+        fs::rename(&temp_runtime_dir, &final_runtime_dir)
+            .with_context(|| "failed to move new runtime to final location")?;
+        
+        // Success! The guard will now see that temp_runtime_dir doesn't exist anymore and do nothing.
+        // We can also try to clean up the .old dir.
+        if old_runtime_dir.exists() {
+            let _ = fs::remove_dir_all(&old_runtime_dir);
+        }
+        log.push_str("atomic runtime swap successful\n");
     }
 
     let _ = progress.send(InstallProgress {
@@ -158,7 +209,7 @@ pub fn run(data: &WizardData, progress: Sender<InstallProgress>) -> Result<Insta
 
     Ok(InstallReport {
         config_path,
-        runtime_dir,
+        runtime_dir: final_runtime_dir,
         node_path,
         cli_path,
         data_root,

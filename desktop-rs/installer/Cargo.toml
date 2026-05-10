@@ -33,3 +33,5 @@ lzma-rs = "0.3"
 tar = "0.4"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 rand = "0.8"
+[build-dependencies]
+winres = "0.1"
