@@ -191,7 +191,7 @@ install_termux() {
   say "ставлю @thesashadev/girl-agent@${PKG_VERSION} в ${PREFIX}/lib..."
   mkdir -p "$PREFIX/lib"
   
-  if ! "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --no-optional --loglevel error "@thesashadev/girl-agent@${PKG_VERSION}"; then
+  if ! "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --no-optional --ignore-scripts --loglevel error "@thesashadev/girl-agent@${PKG_VERSION}"; then
     warn "Возможные причины ошибки в Termux:"
     warn "1. Нехватка памяти (OOM) — закройте тяжелые приложения в фоне Android."
     warn "2. Отсутствие нужных библиотек. Читайте ошибку выше (обычно node-gyp rebuild failed)."
