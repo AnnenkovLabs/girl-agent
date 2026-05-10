@@ -56,6 +56,9 @@ curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/master/scrip
 girl-agent                   # ink-визард для интерактивной первичной настройки
 girl-agent --profile=arina   # запустить готовый профиль
 girl-agent server --help     # серверный режим (без TTY, для systemd / cron / CI)
+
+# для Termux (Android): запуск в фоне через PM2
+pm2 start girl-agent -- server --headless --profile=arina
 ```
 
 Опции установщика:

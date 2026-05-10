@@ -177,10 +177,16 @@ install_termux() {
     fi
   fi
 
-  say "ставлю утилиты сборки (python, make, clang) для нативных модулей npm..."
+  say "ставлю утилиты сборки (python, make, clang, binutils) для нативных модулей npm..."
   if command -v pkg >/dev/null 2>&1; then
-    pkg install -y python make clang || warn "не удалось установить python/make/clang, сборка нативных модулей может упасть."
+    pkg install -y python make clang binutils || warn "не удалось установить инструменты сборки, установка может упасть."
   fi
+
+  say "ставлю PM2 для фоновой работы..."
+  "$NPM" install -g pm2 --loglevel error || warn "не удалось установить PM2 глобально."
+
+  say "активирую wake-lock (предотвращение сна)..."
+  termux-wake-lock || warn "не удалось активировать wake-lock."
 
   say "ставлю @thesashadev/girl-agent@${PKG_VERSION} в ${PREFIX}/lib..."
   mkdir -p "$PREFIX/lib"
@@ -294,6 +300,20 @@ cat >&2 <<EOF
   ${B}girl-agent server --help${D}      # серверный режим (config-файл / env vars)
   ${B}girl-agent server --print-config > bot.json${D}
   ${B}girl-agent server --config bot.json --headless${D}
+EOF
+
+if [ "$MODE" = "termux" ]; then
+cat >&2 <<EOF
+
+${B}${Y}Termux Hosting Tips:${D}
+  - Чтобы бот не засыпал: ${G}termux-wake-lock${D} (уже активно)
+  - Для фоновой работы используй PM2:
+      ${BLUE}pm2 start girl-agent -- server --headless --profile=ВАШ_ПРОФИЛЬ${D}
+  - В настройках Android ${Y}отключи оптимизацию батареи${D} для Termux.
+EOF
+fi
+
+cat >&2 <<EOF
 
 профили хранятся в: ${DATA_DIR}
 обновить: запусти install.sh ещё раз
