@@ -19,7 +19,7 @@ set -eu
 
 # -------- pretty output --------
 _color() { if [ -t 2 ] && command -v tput >/dev/null 2>&1; then printf "%s" "$(tput "$@")"; fi; }
-B=$(_color bold); D=$(_color sgr0); G=$(_color setaf 2); R=$(_color setaf 1); Y=$(_color setaf 3)
+B=$(_color bold); D=$(_color sgr0); G=$(_color setaf 2); R=$(_color setaf 1); Y=$(_color setaf 3); BLUE=$(_color setaf 4)
 say() { printf "%s[girl-agent]%s %s\n" "$B" "$D" "$1" >&2; }
 ok()  { printf "%s[girl-agent]%s %s%s%s\n" "$B" "$D" "$G" "$1" "$D" >&2; }
 warn(){ printf "%s[girl-agent]%s %s%s%s\n" "$B" "$D" "$Y" "$1" "$D" >&2; }
@@ -277,6 +277,12 @@ case ":$PATH:" in
       [ -f "$HOME/.zshrc" ] && RC="$HOME/.zshrc"
       [ -z "$RC" ] && [ -f "$HOME/.bashrc" ] && RC="$HOME/.bashrc"
       [ -z "$RC" ] && [ -f "$HOME/.profile" ] && RC="$HOME/.profile"
+      if [ -z "$RC" ] && [ -n "${TERMUX_VERSION:-}" ]; then
+        RC="$HOME/.bashrc"
+        touch "$RC"
+        ok "создал $RC для Termux"
+      fi
+
       if [ -n "$RC" ]; then
         if ! grep -qF ".local/bin" "$RC" 2>/dev/null; then
           printf '\n# added by girl-agent install.sh\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$RC"
