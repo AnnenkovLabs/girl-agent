@@ -345,11 +345,54 @@ export class Runtime extends EventEmitter {
     return sent;
   }
 
-  private async sendSafeFallback(chatId: number | string, hist: ConversationTurn[], scope: RelationshipScope): Promise<void> {
+  private async sendSafeFallback(chatId: number | string, hist: ConversationTurn[], scope: RelationshipScope, reasonTag = "silent-fallback"): Promise<void> {
     if (this.userbotActionAvailable("readHistory")) await this.tg.readHistory?.(chatId).catch(() => {});
     this.setDecisionStatus(this.histKey(chatId), "fallback", "LLM не дал безопасный ответ");
-    this.emit("event", { type: "ignored", text: hist[hist.length - 1]?.content ?? "", reason: "silent-fallback" } as RuntimeEvent);
-    if (scope === "primary") await appendSessionLog(this.cfg.slug, this.cfg.tz, "  -> ignored (silent-fallback)");
+    this.emit("event", { type: "ignored", text: hist[hist.length - 1]?.content ?? "", reason: reasonTag } as RuntimeEvent);
+    if (scope === "primary") await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> ignored (${reasonTag})`);
+  }
+
+  /**
+   * Один ретрай с упрощённым system-промптом. Используется когда первый ответ оказался
+   * пустым/полностью отфильтрованным санитайзером — чтобы не уходить в игнор.
+   */
+  private async retryReplyBrief(originalMessages: ChatMessage[]): Promise<string> {
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content: "Ответь как живая девушка одним очень коротким сообщением (1-6 слов), без markdown, без эмодзи, без мета-комментариев. Просто фраза. Например: 'ну ок', 'ага', 'хм', 'ясно', 'и?', 'че'."
+      },
+      ...originalMessages.slice(-15).filter(m => m.role !== "system")
+    ];
+    const raw = await this.llm.chat(messages, { temperature: 0.8, maxTokens: 60 });
+    return sanitizeModelReply(raw);
+  }
+
+  /**
+   * Последняя линия обороны — посылаем КОРОТКИЙ нейтральный филлер вместо молчания.
+   * Раньше тут был silent-fallback (ignored), но это раздражает юзеров.
+   * Подбираем филлер исходя из персоны: если в speech.md есть "ага"/"ок"/"хм" — используем.
+   */
+  private async sendNeutralFiller(chatId: number | string, hist: ConversationTurn[], scope: RelationshipScope, typing: boolean): Promise<void> {
+    const fillers = ["хм", "ну ок", "ага", "ясно", "понятно", "и?", "хз"];
+    // не повторяемся за последние 4 ассистентских реплики
+    const recent = new Set(hist.slice(-8).filter(t => t.role === "assistant").map(t => normalizeForDuplicate(t.content)));
+    const candidate = fillers.find(f => !recent.has(normalizeForDuplicate(f))) ?? fillers[0]!;
+    try {
+      if (typing) await this.tg.setTyping(chatId, true).catch(() => {});
+      await this.tg.sendText(chatId, candidate);
+      this.lastSentByChat.set(this.histKey(chatId), Date.now());
+      this.lastHerReplyTs.set(this.histKey(chatId), Date.now());
+      this.emit("event", { type: "outgoing", text: candidate, chatId } as RuntimeEvent);
+      this.emit("event", { type: "info", text: "neutral-filler вместо silent-fallback" } as RuntimeEvent);
+      if (scope === "primary") await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> она (filler): ${candidate}`);
+      hist.push({ role: "assistant", content: candidate, ts: Date.now() });
+      this.setDecisionStatus(this.histKey(chatId), "sent", "neutral-filler");
+    } catch (e) {
+      // если и филлер не ушёл — тогда уже silent-fallback с нормальным reason'ом
+      this.emit("event", { type: "error", text: `filler send failed: ${silentErrorLabel(e)}` } as RuntimeEvent);
+      await this.sendSafeFallback(chatId, hist, scope, "filler-failed");
+    }
   }
 
   private async generateJailbreakReaction(incomingText: string, scope: RelationshipScope): Promise<string[]> {
@@ -688,7 +731,7 @@ export class Runtime extends EventEmitter {
       ? "\nЭто сторонний личный чат, не основной парень. Не используй память/отношения основного парня. Если заход романтический — поставь границу. Если вопрос обычный — ответь по легенде коротко."
       : "";
     const messages: ChatMessage[] = [
-      { role: "system" as const, content: sys + `\n\n# Подсказка от behavior-layer\nintent=${tick.intent}\nкол-во пузырей: ${tick.bubbles}${presenceHint ? `\nдоступность: ${presenceHint}` : ""}\n${tick.intent === "short" ? "Отвечай односложно: 'ок', 'ясно', 'и?', 'ну ок'. Без объяснений." : tick.bubbles > 1 ? "Разбей ответ на пузыри строкой '---' между ними. Каждый пузырь — отдельная мысль/обрывок." : "Один короткий ответ, без '---'."}${scopeHint}` },
+      { role: "system" as const, content: sys + `\n\n# Подсказка от behavior-layer\nintent=${tick.intent}\nкол-во пузырей: ${tick.bubbles}${presenceHint ? `\nдоступность: ${presenceHint}` : ""}\n${tick.intent === "short" ? "Отвечай односложно: 'ок', 'ясно', 'и?', 'ну ок'. Без объяснений." : tick.bubbles > 1 ? "Разбей ответ на пузыри СТРОГО строкой '---' (три дефиса на отдельной строке) между ними. КАЖДЫЙ пузырь — отдельное сообщение в тг. ЗАПРЕЩЕНО раскидывать одно сообщение на несколько строк через перенос строки без '---' — в тг это выглядит как одно сообщение в столбик, что палит ИИ. Правильно:\\n\\nпривет\\n---\\nкак сам\\n\\nНеправильно:\\n\\nпривет\\nкак сам" : "Один короткий ответ, без '---'."}${scopeHint}` },
       ...hist.slice(-30).map(t => ({ role: t.role, content: t.content }))
     ];
     const image = imagePartFromMedia(incoming?.media);
@@ -706,13 +749,20 @@ export class Runtime extends EventEmitter {
       if (tick.typing) await this.tg.setTyping(chatId, true);
       reply = sanitizeModelReply(await this.llm.chat(messages, { temperature: 0.95, maxTokens: 3500 }));
     } catch (e) {
+      // техническая ошибка LLM — не вытягиваем юзера ретраем, молча уходим в ignored
       this.emit("event", { type: "error", text: silentErrorLabel(e) } as RuntimeEvent);
-      await this.sendSafeFallback(chatId, hist, scope);
+      await this.sendSafeFallback(chatId, hist, scope, "llm-error");
       return;
     }
     if (!reply) {
-      await this.sendSafeFallback(chatId, hist, scope);
-      return;
+      // Пустой/санитайзнутый ответ — пробуем один ретрай с более строгим промптом,
+      // чтобы не уходить молча в игнор (раздражающее поведение).
+      reply = await this.retryReplyBrief(messages).catch(() => "");
+      if (!reply) {
+        await this.sendNeutralFiller(chatId, hist, scope, tick.typing);
+        return;
+      }
+      this.emit("event", { type: "info", text: "retry-reply-brief succeeded после пустого первого ответа" } as RuntimeEvent);
     }
 
     // Parse and execute tool markers at start of reply (userbot mode only)
@@ -721,7 +771,7 @@ export class Runtime extends EventEmitter {
       await this.executeToolAction(action, chatId);
     }
 
-    const bubbles = dedupeBubbles(cleanedReply.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean)).slice(0, Math.max(tick.bubbles || 1, 1));
+    const bubbles = dedupeBubbles(smartSplitBubbles(cleanedReply, tick.bubbles || 1)).slice(0, Math.max(tick.bubbles || 1, 1));
     const sent = await this.sendBubbles(chatId, bubbles, hist, scope, tick.typing);
     this.setDecisionStatus(this.histKey(chatId), sent.length ? "sent" : "fallback", sent.length ? undefined : "все пузыри были пустыми/дублями");
     if (scope === "primary") {
@@ -1228,7 +1278,14 @@ export class Runtime extends EventEmitter {
 
   // ===== tool markers parsing (userbot actions via AI) =====
 
+  /**
+   * Парсим лидирующие маркеры [ACTION] в начале ответа. Дополнительно:
+   * - любой выдуманный/неполный marker-like блок (например "[EDIT_LAST: ...]" или "[EDIT_LAST: ... она)")
+   *   НЕ попадёт юзеру как текст — вырезаем и логируем.
+   * - известные маркеры (BLOCK/UNBLOCK/READ/STICKER) — исполняем.
+   */
   private parseToolMarkers(reply: string): { cleanedReply: string; actions: string[] } {
+    const KNOWN = new Set(["BLOCK", "UNBLOCK", "READ", "STICKER"]);
     const lines = reply.split("\n");
     const actions: string[] = [];
     let firstContentLine = 0;
@@ -1236,14 +1293,29 @@ export class Runtime extends EventEmitter {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!.trim();
       if (!line) continue;
-      const markerMatch = line.match(/^\[([A-Z_]+)(?::([^\]]*))?\]$/);
-      if (markerMatch) {
-        const [, action, arg] = markerMatch;
-        actions.push(arg ? `${action}:${arg}` : action!);
+      // каноничный формат: [ACTION] или [ACTION:arg]
+      const canonical = line.match(/^\[([A-Z_]+)(?::([^\]]*))?\]$/);
+      if (canonical) {
+        const [, action, arg] = canonical;
+        if (KNOWN.has(action!)) {
+          actions.push(arg ? `${action}:${arg}` : action!);
+          firstContentLine = i + 1;
+          continue;
+        }
+        // известного marker-like формата но неизвестный action — вырезаем.
+        this.emit("event", { type: "info", text: `LLM hallucinated marker [${action}] — вырезан` } as RuntimeEvent);
         firstContentLine = i + 1;
-      } else {
-        break;
+        continue;
       }
+      // сломанный marker-like на отдельной строке: '[EDIT_LAST: ...' / '[EDIT_LAST: ... она)' / '[REACT: 😂'
+      // эвристика: начинается с '[', внутри есть имя из заглавных/_ + (':' или ']') — это претендент на marker.
+      const broken = line.match(/^\[([A-Z][A-Z_]{2,})(?::|\])/);
+      if (broken) {
+        this.emit("event", { type: "info", text: `LLM hallucinated marker [${broken[1]}…] — вырезан` } as RuntimeEvent);
+        firstContentLine = i + 1;
+        continue;
+      }
+      break;
     }
 
     const cleanedReply = lines.slice(firstContentLine).join("\n").trim();
@@ -1275,12 +1347,6 @@ export class Runtime extends EventEmitter {
           if (this.userbotActionAvailable("readHistory")) {
             await this.tg.readHistory?.(chatId);
             this.emit("event", { type: "info", text: `AI tool: marked read ${chatId}`, chatId } as RuntimeEvent);
-          }
-          break;
-        case "REPORT":
-          if (this.userbotActionAvailable("reportSpam")) {
-            await this.tg.reportSpam?.(chatId);
-            this.emit("event", { type: "info", text: `AI tool: reported spam ${chatId}`, chatId } as RuntimeEvent);
           }
           break;
         case "STICKER":
@@ -1322,6 +1388,55 @@ function dedupeBubbles(bubbles: string[]): string[] {
     seen.add(normalized);
     return true;
   });
+}
+
+/**
+ * Делит ответ модели на пузыри. Канонический разделитель — строка "---" между блоками.
+ * Дополнительно: если LLM забыла поставить "---" и просто отправила короткие строки через \n
+ * (типа "вот\nкак я\nсейчас\nна разных строчках") — конвертируем такие переносы в разделители пузырей.
+ *
+ * Эвристика "это короткие фразы для разных пузырей":
+ * - в тексте не использован "---"
+ * - больше одной непустой строки
+ * - КАЖДАЯ строка короткая (<= 80 символов после трима) И не похожа на элемент списка/цитаты/кода
+ * - И общее число строк <= 6 (длинные многострочные блоки — стихи/инструкции — не трогаем)
+ *
+ * Если строка одна, или строки длинные, или попадаются list-markers ("- ", "1.", "> ", "    code"),
+ * считаем что это намеренный многострочный пузырь и не разбиваем.
+ */
+function smartSplitBubbles(reply: string, expectedBubbles: number): string[] {
+  const explicit = reply.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean);
+  if (explicit.length > 1) return explicit;
+
+  const single = explicit[0] ?? "";
+  if (!single) return [];
+
+  // expectedBubbles<=1 — модель и не должна была разбивать, оставляем как есть.
+  if (expectedBubbles <= 1) return [single];
+
+  const rawLines = single.split("\n").map(l => l.trim());
+  const lines = rawLines.filter(Boolean);
+  if (lines.length < 2 || lines.length > 6) return [single];
+
+  // если хоть одна строка длиннее 80 символов — это намеренный абзац, не дробим.
+  if (lines.some(l => l.length > 80)) return [single];
+
+  // если хоть одна строка похожа на list-item / quote / numbered list — оставляем как есть
+  const looksStructured = lines.some(l =>
+    /^[-*•]\s/.test(l) || /^>\s/.test(l) || /^\d+[.)]\s/.test(l)
+  );
+  if (looksStructured) return [single];
+
+  // если строки заканчиваются на запятые/тире (это явно part-of-sentence continuation, типа "иду в магазин,\nкупить хлеба")
+  // — не дробим (один человек, одна фраза в столбик это палево, но обрыв запятой — это уже стилистика).
+  // А когда строки выглядят как самостоятельные обрывки фразы — дробим.
+  const allEndPunctuated = lines.every(l => /[.!?…)]$|\)\)+$/.test(l));
+  const continuationCommas = lines.slice(0, -1).filter(l => /,$/.test(l)).length;
+  if (continuationCommas >= Math.ceil((lines.length - 1) / 2) && !allEndPunctuated) {
+    return [single];
+  }
+
+  return lines;
 }
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
