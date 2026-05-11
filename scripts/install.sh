@@ -12,7 +12,7 @@
 #      системы, ноль шансов на конфликты версий).
 #   5. Не трогает существующий node, npm, ничего глобально.
 #
-# Поддерживается: linux x86_64/aarch64, macOS x86_64/arm64, WSL.
+# Поддерживается: linux x86_64/aarch64, macOS x86_64/arm64, WSL, Android (Termux).
 # В чистом Windows — используй .exe инсталлер из github releases.
 
 set -eu
@@ -78,7 +78,19 @@ EOF
 done
 
 # -------- detect platform --------
+# Termux — это не обычный linux: бинарники с nodejs.org там не работают (другой ABI),
+# нужен Termux-native node через `pkg install nodejs`.
+# Сохраняем оригинальный $PREFIX (в Termux это путь к рантайму, типа /data/data/com.termux/files/usr),
+# чтобы не конфликтовать с нашим script-локальным $PREFIX для установки.
+TERMUX_NATIVE_PREFIX="${PREFIX:-}"
+is_termux() {
+  if [ -n "${TERMUX_VERSION:-}" ]; then return 0; fi
+  if [ -d "/data/data/com.termux/files/usr" ]; then return 0; fi
+  if [ -n "$TERMUX_NATIVE_PREFIX" ] && [ -d "$TERMUX_NATIVE_PREFIX/bin" ] && command -v termux-info >/dev/null 2>&1; then return 0; fi
+  return 1
+}
 detect_os() {
+  if is_termux; then echo "termux"; return; fi
   case "$(uname -s)" in
     Linux*) echo "linux" ;;
     Darwin*) echo "darwin" ;;
@@ -99,15 +111,32 @@ OS=$(detect_os)
 ARCH=$(detect_arch)
 say "детект: ${OS}-${ARCH}"
 
+# Termux: используем нативный node из pkg, ставим глобально (в $PREFIX/lib/node_modules).
+# PATH уже содержит $PREFIX/bin — ничего настраивать не нужно.
+if [ "$OS" = "termux" ]; then
+  TERMUX_RUNTIME_PREFIX="${TERMUX_NATIVE_PREFIX:-/data/data/com.termux/files/usr}"
+  BIN_DIR="${TERMUX_RUNTIME_PREFIX}/bin"
+  # runtime использует os.homedir()/.local/share/girl-agent/data — на Termux это валидный путь
+  DATA_DIR="$HOME/.local/share/girl-agent/data"
+  MODE="termux"
+  say "детектирован Termux (Android) — runtime в ${TERMUX_RUNTIME_PREFIX}, data в $DATA_DIR"
+fi
+
 # -------- determine mode --------
 if [ "$MODE" = "auto" ]; then
-  if command -v docker >/dev/null 2>&1; then
+  if [ "$OS" = "termux" ]; then
+    say "Termux — docker не поддерживается, используем нативный node из pkg"
+    MODE="termux"
+  elif command -v docker >/dev/null 2>&1; then
     say "docker найден — используем docker-режим (нет конфликтов версий)"
     MODE="docker"
   else
     say "docker не найден — используем локальный режим (изолированная нода)"
     MODE="local"
   fi
+elif [ "$OS" = "termux" ] && [ "$MODE" != "termux" ]; then
+  warn "в Termux работает только termux-режим (--docker/--local не поддерживаются), переключаю"
+  MODE="termux"
 fi
 
 # -------- common: ensure dirs --------
@@ -197,14 +226,45 @@ EOF
   ok "package: ${PKG_VERSION}"
 }
 
+# -------- mode: termux --------
+# В Termux не качаем nodejs.org — бинарники оттуда линкуются против glibc, а в Termux его нет (bionic).
+# Используем нативный node из `pkg install nodejs`.
+install_termux() {
+  if ! command -v node >/dev/null 2>&1; then
+    say "node не найден в Termux — ставлю через pkg..."
+    if ! command -v pkg >/dev/null 2>&1; then
+      die "pkg не найден — это не Termux? Поставь Termux из F-Droid: https://f-droid.org/packages/com.termux/"
+    fi
+    pkg update -y >&2 || warn "pkg update с ошибкой, продолжаю"
+    pkg install -y nodejs >&2 || die "не удалось pkg install nodejs"
+  fi
+  say "node: $(node --version) (termux-native)"
+
+  # Глобальная установка в Termux работает прямолинейно — npm пишет в $PREFIX/lib/node_modules
+  # и кладёт shim в $PREFIX/bin. Никаких sudo не нужно.
+  say "ставлю @thesashadev/girl-agent@${PKG_VERSION} глобально (в Termux $PREFIX)"
+  npm install -g --no-audit --no-fund "@thesashadev/girl-agent@${PKG_VERSION}" >&2 \
+    || die "npm install -g не удался"
+
+  ok "Termux-установка готова"
+  ok "node:    $(node --version)"
+  ok "package: ${PKG_VERSION}"
+  ok "data:    $DATA_DIR"
+}
+
 # -------- run install --------
 case "$MODE" in
   docker) install_docker ;;
   local) install_local ;;
+  termux) install_termux ;;
   *) die "неизвестный режим: $MODE" ;;
 esac
 
 # -------- PATH hint --------
+if [ "$OS" = "termux" ]; then
+  # в Termux $PREFIX/bin всегда в PATH — ничего не нужно добавлять
+  ok "PATH в Termux уже содержит npm-prefix/bin"
+else
 case ":$PATH:" in
   *":$BIN_DIR:"*) ok "${BIN_DIR} уже в PATH" ;;
   *)
@@ -230,12 +290,33 @@ case ":$PATH:" in
     fi
     ;;
 esac
+fi
 
-cat >&2 <<EOF
+if [ "$OS" = "termux" ]; then
+  cat >&2 <<EOF
+
+готово (Termux). что дальше:
+
+  ${B}girl-agent${D}                    # открывает WebUI на http://localhost:3000
+  ${B}girl-agent server --help${D}      # серверный режим (config-файл / env vars)
+
+профили хранятся в: ${DATA_DIR}
+открой WebUI в браузере на том же телефоне: http://localhost:3000
+чтобы не убивался процесс при блокировке экрана:
+  ${B}termux-wake-lock${D}
+проверить нет ли проблем с storage:
+  ${B}termux-setup-storage${D}
+
+обновить: npm install -g @thesashadev/girl-agent@latest
+удалить: npm uninstall -g @thesashadev/girl-agent
+
+EOF
+else
+  cat >&2 <<EOF
 
 готово. что дальше:
 
-  ${B}girl-agent${D}                    # ink-визард (нужен обычный терминал с TTY)
+  ${B}girl-agent${D}                    # открывает WebUI на http://localhost:3000
   ${B}girl-agent server --help${D}      # серверный режим (config-файл / env vars)
   ${B}girl-agent server --print-config > bot.json${D}
   ${B}girl-agent server --config bot.json --headless${D}
@@ -245,3 +326,4 @@ cat >&2 <<EOF
 удалить: rm -rf ${PREFIX} ${BIN_DIR}/girl-agent
 
 EOF
+fi
