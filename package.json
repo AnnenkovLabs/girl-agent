@@ -9,7 +9,6 @@
   "main": "dist/cli.js",
   "files": [
     "dist",
-    "templates",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

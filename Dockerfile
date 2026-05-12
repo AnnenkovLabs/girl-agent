@@ -18,6 +18,7 @@ RUN apk add --no-cache python3 make g++ \
     && npm ci --no-audit --no-fund
 COPY tsconfig.json tsup.config.ts ./
 COPY src ./src
+COPY webui ./webui
 RUN npm run build
 
 # ---- runtime stage (small) ----
