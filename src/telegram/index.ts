@@ -53,6 +53,12 @@ export interface TgAdapter {
   setReaction(chatId: number | string, messageId: number, emoji: string): Promise<void>;
   /** Отредактировать ранее отправленное сообщение (Task #1). Тихий no-op если не поддерживается. */
   editText?(chatId: number | string, messageId: number, newText: string): Promise<void>;
+  /**
+   * Issue #81 — пинг статуса «онлайн» в Telegram без отправки сообщения.
+   * Для юзербота вызывает account.UpdateStatus, для bot-режима тихий no-op
+   * (у ботов нет last seen).
+   */
+  updateOnlineStatus?(online: boolean): Promise<void>;
   blockContact?(chatId: number | string): Promise<void>;
   unblockContact?(chatId: number | string): Promise<void>;
   readHistory?(chatId: number | string): Promise<void>;

@@ -275,6 +275,14 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
         }));
       } catch { /* too old / deleted / no perms */ }
     },
+    async updateOnlineStatus(online) {
+      // Issue #81 — выставляем статус «в сети» / «не в сети».
+      // Telegram держит online ~60с от последнего UpdateStatus({offline:false}),
+      // поэтому heartbeat должен периодически освежать состояние.
+      try {
+        await client.invoke(new Api.account.UpdateStatus({ offline: !online }));
+      } catch { /* swallow — может быть отключение, флуд-лимит и т.п. */ }
+    },
     async blockContact(chatId) {
       const peer = await resolvePeer(chatId);
       await client.invoke(new Api.contacts.Block({ id: peer }));

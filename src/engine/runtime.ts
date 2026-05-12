@@ -14,6 +14,7 @@ import { findPreset } from "../presets/llm.js";
 import { startMcpServers, type McpHandle } from "../mcp/client.js";
 import { extractAgendaUpdates, dueAgendaItems, markAgendaFired, decideAfterProactiveResponse, ensureAutonomousAgenda, rescheduleAgenda, reconcileAgendaAfterConflict } from "./agenda.js";
 import { computePresenceProfile, computePresenceState, type PresenceProfile } from "./presence.js";
+import { decideOnlineHeartbeat } from "./online-tick.js";
 import { loadOrGenerateDailyLife, currentBlock, type DailyLife } from "./daily-life.js";
 import {
   readConflict, writeConflict, escalateFromMood, softenFromMood, activeConflict,
@@ -71,6 +72,11 @@ export class Runtime extends EventEmitter {
   private paused = false;
   private agendaTimer?: NodeJS.Timeout;
   private dailyTimer?: NodeJS.Timeout;
+  private onlineHeartbeatTimer?: NodeJS.Timeout;
+  /** Текущее «выставленное» нами состояние онлайна для heartbeat (Issue #81). */
+  private heartbeatOnline = false;
+  /** Когда был последний реальный send — Telegram сам делает нас онлайн при отправке. */
+  private lastRealSendMs = 0;
   private presenceProfile!: PresenceProfile;
   private dailyLife?: DailyLife;
   private dailyLifeDate?: string;
@@ -132,11 +138,17 @@ export class Runtime extends EventEmitter {
       this.emit("event", { type: "error", text: "daily maintenance: " + (e as Error).message } as RuntimeEvent)
     ), 30 * 60_000);
     this.dailyTimer.unref?.();
+
+    // Issue #81 — heartbeat «онлайн без сообщений» (только userbot — у ботов нет last seen).
+    if (this.cfg.mode === "userbot" && this.tg?.updateOnlineStatus) {
+      this.scheduleOnlineHeartbeat(15_000 + Math.floor(Math.random() * 45_000));
+    }
   }
 
   async stop(): Promise<void> {
     if (this.agendaTimer) clearInterval(this.agendaTimer);
     if (this.dailyTimer) clearInterval(this.dailyTimer);
+    if (this.onlineHeartbeatTimer) clearTimeout(this.onlineHeartbeatTimer);
     for (const timer of this.pendingReplyTimers.values()) clearTimeout(timer);
     this.pendingReplyTimers.clear();
     this.pendingReplyDueAt.clear();
@@ -355,6 +367,7 @@ export class Runtime extends EventEmitter {
       if (typing) await this.tg.setTyping(chatId, true).catch(() => {});
       const messageId = await this.tg.sendText(chatId, text);
       const now = Date.now();
+      this.lastRealSendMs = now;
       if (messageId) {
         this.lastSentByChat.set(this.histKey(chatId), messageId);
         this.sentMessages.push({ key: this.histKey(chatId), chatId, messageId, ts: now, text });
@@ -425,6 +438,7 @@ export class Runtime extends EventEmitter {
     try {
       if (typing) await this.tg.setTyping(chatId, true).catch(() => {});
       await this.tg.sendText(chatId, candidate);
+      this.lastRealSendMs = Date.now();
       this.lastSentByChat.set(this.histKey(chatId), Date.now());
       this.lastHerReplyTs.set(this.histKey(chatId), Date.now());
       this.emit("event", { type: "outgoing", text: candidate, chatId } as RuntimeEvent);
@@ -523,6 +537,46 @@ export class Runtime extends EventEmitter {
     // Сводки за прошлые дни
     const made = await closeStaleSessions(this.llm, this.cfg);
     if (made > 0) this.emit("event", { type: "info", text: `daily summaries: +${made}` } as RuntimeEvent);
+  }
+
+  /**
+   * Issue #81 — периодически выставляет статус «онлайн» в Telegram
+   * чтобы выглядело будто она заходит почитать/полистать тг даже когда не пишет.
+   * Только для userbot: у ботов в Bot API нет понятия last seen.
+   */
+  private scheduleOnlineHeartbeat(initialDelayMs: number): void {
+    if (this.onlineHeartbeatTimer) clearTimeout(this.onlineHeartbeatTimer);
+    this.onlineHeartbeatTimer = setTimeout(() => this.onlineHeartbeatTick().catch(e =>
+      this.emit("event", { type: "error", text: "online heartbeat: " + (e as Error).message } as RuntimeEvent)
+    ), initialDelayMs);
+    this.onlineHeartbeatTimer.unref?.();
+  }
+
+  private async onlineHeartbeatTick(): Promise<void> {
+    if (this.paused || !this.tg?.updateOnlineStatus) return;
+    // Активный диалог = недавно отвечала кому-либо
+    const now = Date.now();
+    let mostRecentReply = 0;
+    for (const ts of this.lastHerReplyTs.values()) if (ts > mostRecentReply) mostRecentReply = ts;
+    const inActiveDialog = mostRecentReply > 0 && now - mostRecentReply < 4 * 60 * 1000;
+
+    const decision = decideOnlineHeartbeat(this.cfg, this.presenceProfile, {
+      inActiveDialog,
+      recentSendMs: this.lastRealSendMs
+    });
+
+    if (decision.online && !this.heartbeatOnline) {
+      this.heartbeatOnline = true;
+      this.emit("event", { type: "info", text: `online-heartbeat: появилась в сети (${decision.reason})` } as RuntimeEvent);
+    } else if (!decision.online && this.heartbeatOnline) {
+      this.heartbeatOnline = false;
+    }
+    if (decision.online) {
+      await this.tg.updateOnlineStatus(true).catch(() => {});
+    }
+    // Следующий тик с лёгким джиттером
+    const jitterMs = Math.floor(Math.random() * 15_000);
+    this.scheduleOnlineHeartbeat(Math.max(20_000, decision.nextTickSec * 1000 + jitterMs));
   }
 
   private async handleIncoming(m: IncomingMessage): Promise<void> {
@@ -910,6 +964,7 @@ export class Runtime extends EventEmitter {
         await this.tg.setTyping(item.chatId, true);
         const messageId = await this.tg.sendText(item.chatId, piece);
         const now = Date.now();
+        this.lastRealSendMs = now;
         if (messageId) {
           this.lastSentByChat.set(this.histKey(item.chatId), messageId);
           this.sentMessages.push({ key: this.histKey(item.chatId), chatId: item.chatId, messageId, ts: now });
