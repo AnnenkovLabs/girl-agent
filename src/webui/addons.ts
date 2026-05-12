@@ -50,9 +50,28 @@ export interface AddonManifest {
   locale?: { lang: string; strings: Record<string, string> };
   /** для fix — текст patch'а */
   patch?: string;
+  /** настройки аддона — пользователь заполняет при установке/позже */
+  settings?: AddonSetting[];
   /** превью / иконка (URL или data:) */
   icon?: string;
   homepage?: string;
+}
+
+export interface AddonSetting {
+  /** уникальный ключ настройки (латиница, без пробелов) */
+  key: string;
+  /** отображаемое название */
+  label: string;
+  /** описание / подсказка */
+  hint?: string;
+  /** тип поля */
+  type: "string" | "number" | "boolean" | "select";
+  /** значение по умолчанию */
+  default?: string | number | boolean;
+  /** варианты для type=select */
+  options?: { value: string; label: string }[];
+  /** обязательное ли поле */
+  required?: boolean;
 }
 
 export interface InstalledAddon {
@@ -60,6 +79,8 @@ export interface InstalledAddon {
   enabled: boolean;
   installedAt: string;
   source: "registry" | "url" | "local";
+  /** пользовательские значения настроек */
+  settingsValues?: Record<string, string | number | boolean>;
 }
 
 export const REGISTRY_URL = process.env.GIRL_AGENT_ADDON_REGISTRY
@@ -136,6 +157,15 @@ export async function toggle(id: string, enabled: boolean): Promise<InstalledAdd
   return item;
 }
 
+export async function updateSettings(id: string, values: Record<string, string | number | boolean>): Promise<InstalledAddon | null> {
+  const list = await listInstalled();
+  const item = list.find(a => a.manifest.id === id);
+  if (!item) return null;
+  item.settingsValues = { ...(item.settingsValues ?? {}), ...values };
+  await writeInstalled(list);
+  return item;
+}
+
 export function validateManifest(m: unknown): asserts m is AddonManifest {
   if (!m || typeof m !== "object") throw new Error("manifest must be object");
   const x = m as Record<string, unknown>;
@@ -190,7 +220,17 @@ export const BUILTIN_ADDONS: AddonManifest[] = [
     version: "1.0.0",
     author: "girl-agent",
     tags: ["mod", "schedule"],
-    configOverrides: { sleepFrom: 6, sleepTo: 14, nightWakeChance: 0.6 }
+    configOverrides: { sleepFrom: 6, sleepTo: 14, nightWakeChance: 0.6 },
+    settings: [
+      { key: "sleepFrom", label: "Засыпает в", type: "number", default: 6, hint: "Час (0–23)" },
+      { key: "sleepTo", label: "Просыпается в", type: "number", default: 14, hint: "Час (0–23)" },
+      { key: "nightWakeChance", label: "Шанс проснуться ночью", type: "select", default: "0.6", options: [
+        { value: "0.2", label: "Низкий (20%)" },
+        { value: "0.4", label: "Средний (40%)" },
+        { value: "0.6", label: "Высокий (60%)" },
+        { value: "0.8", label: "Очень высокий (80%)" }
+      ] }
+    ]
   },
   {
     type: "theme",

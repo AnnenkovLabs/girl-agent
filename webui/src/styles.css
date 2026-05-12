@@ -552,7 +552,13 @@ a:hover { text-decoration: underline; }
 .addon-card .meta { font-size: 12px; color: var(--ga-text-dim); }
 .addon-card h3 { margin: 0; font-size: 14px; }
 .addon-card p { font-size: 13px; color: var(--ga-text-dim); margin: 6px 0 12px; flex: 1; }
-.addon-card .actions { display: flex; gap: 8px; }
+.addon-card .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.addon-settings {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ga-border);
+}
 
 /* ==== Empty / loading states ==== */
 
@@ -595,6 +601,114 @@ a:hover { text-decoration: underline; }
 .banner.success { border-color: rgba(124, 233, 160, 0.4); }
 .banner.error { border-color: rgba(255, 122, 140, 0.4); }
 @keyframes banner-in { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ==== Command Modal ==== */
+
+.cmd-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 600;
+  animation: cmd-fade-in 0.2s ease-out;
+}
+@keyframes cmd-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.cmd-modal {
+  background: var(--ga-bg-glass, rgba(20, 8, 36, 0.95));
+  border: 1px solid var(--ga-border-strong);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  animation: cmd-scale-in 0.2s var(--ga-spring);
+  overflow: hidden;
+}
+@keyframes cmd-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.cmd-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ga-border);
+}
+.cmd-title {
+  font-family: var(--font-mono, monospace);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ga-accent, #E8412A);
+}
+.cmd-close {
+  background: none; border: none; color: var(--ga-text-dim);
+  font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 6px;
+  transition: background 0.15s;
+}
+.cmd-close:hover { background: rgba(255,255,255,0.08); }
+
+.cmd-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.cmd-loading {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--ga-text-dim);
+  font-size: 14px;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.cmd-error {
+  color: var(--ga-error, #ff7a8c);
+  font-size: 14px;
+  padding: 8px 0;
+}
+
+.cmd-kv-list {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.cmd-kv-row {
+  display: flex; gap: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+}
+.cmd-kv-row:nth-child(odd) { background: rgba(255,255,255,0.06); }
+.cmd-key {
+  font-weight: 600;
+  color: var(--ga-accent-2, #C4DC3C);
+  min-width: 110px;
+  flex-shrink: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+.cmd-val {
+  color: var(--ga-text);
+  word-break: break-word;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+
+.cmd-plain {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ga-text);
+}
+.cmd-line {
+  padding: 3px 0;
+}
+.cmd-empty {
+  color: var(--ga-text-dim);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px 0;
+}
 
 /* ==== Markdown preview ==== */
 

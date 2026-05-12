@@ -42,6 +42,16 @@ export interface CommunicationPreset {
   profile: { notifications: string; messageStyle: string; initiative: string; lifeSharing: string };
 }
 
+export interface AddonSetting {
+  key: string;
+  label: string;
+  hint?: string;
+  type: "string" | "number" | "boolean" | "select";
+  default?: string | number | boolean;
+  options?: { value: string; label: string }[];
+  required?: boolean;
+}
+
 export interface AddonManifest {
   type: "fix" | "mod" | "persona" | "mcp" | "theme" | "locale";
   id: string; name: string; description: string; version: string;
@@ -51,6 +61,7 @@ export interface AddonManifest {
   mcp?: { presetId?: string; secrets?: { key: string; label: string }[] };
   theme?: { vars?: Record<string, string>; css?: string };
   locale?: { lang: string; strings: Record<string, string> };
+  settings?: AddonSetting[];
   installed?: boolean;
 }
 
@@ -59,6 +70,7 @@ export interface InstalledAddon {
   enabled: boolean;
   installedAt: string;
   source: "registry" | "url" | "local";
+  settingsValues?: Record<string, string | number | boolean>;
 }
 
 const BASE = ((): string => {
@@ -176,6 +188,9 @@ export const api = {
   },
   async toggleAddon(id: string, enabled: boolean) {
     return req<{ ok: true; addon: InstalledAddon }>("PUT", `/api/addons/${encodeURIComponent(id)}/toggle`, { enabled });
+  },
+  async updateAddonSettings(id: string, values: Record<string, string | number | boolean>) {
+    return req<{ ok: true; addon: InstalledAddon }>("PUT", `/api/addons/${encodeURIComponent(id)}/settings`, { values });
   },
 
   async assistantChat(profileSlug: string | undefined, messages: { role: string; content: string }[]) {

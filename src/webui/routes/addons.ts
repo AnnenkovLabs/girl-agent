@@ -1,5 +1,5 @@
 import { Router, HttpError } from "../http.js";
-import { fetchRegistry, listInstalled, installFromManifest, uninstall, toggle, BUILTIN_ADDONS, validateManifest, type AddonManifest } from "../addons.js";
+import { fetchRegistry, listInstalled, installFromManifest, uninstall, toggle, updateSettings, BUILTIN_ADDONS, validateManifest, type AddonManifest } from "../addons.js";
 import { readConfig, writeConfig, writeMd } from "../../storage/md.js";
 
 export function registerAddonRoutes(r: Router): void {
@@ -122,6 +122,14 @@ export function registerAddonRoutes(r: Router): void {
   r.put("/api/addons/:id/toggle", async ({ params, body }) => {
     const data = body as { enabled?: boolean } | undefined;
     const result = await toggle(params.id ?? "", !!data?.enabled);
+    if (!result) throw new HttpError(404, "addon not installed");
+    return { ok: true, addon: result };
+  });
+
+  r.put("/api/addons/:id/settings", async ({ params, body }) => {
+    const data = body as { values?: Record<string, string | number | boolean> } | undefined;
+    if (!data?.values || typeof data.values !== "object") throw new HttpError(400, "values required");
+    const result = await updateSettings(params.id ?? "", data.values);
     if (!result) throw new HttpError(404, "addon not installed");
     return { ok: true, addon: result };
   });

@@ -4,6 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { ApplyPill } from "./components/ApplyPill";
 import { Toasts } from "./components/Toasts";
+import { CommandModal } from "./components/CommandModal";
 import { LogsPage } from "./pages/LogsPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { MemoryPage } from "./pages/MemoryPage";
@@ -51,6 +52,7 @@ export function App() {
       </div>
       <ApplyPill />
       <Toasts />
+      <CommandModal />
       {showSetup && <SetupFlow />}
     </>
   );

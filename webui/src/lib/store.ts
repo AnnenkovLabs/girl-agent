@@ -9,6 +9,13 @@ interface Toast {
   text: string;
 }
 
+export interface CommandModalState {
+  command: string;
+  text?: string;
+  error?: string;
+  loading: boolean;
+}
+
 interface State {
   ready: boolean;
   // profiles
@@ -23,6 +30,7 @@ interface State {
   sidebarOpen: boolean;
   theme: "dark" | "light";
   toasts: Toast[];
+  commandModal: CommandModalState | null;
   // actions
   init: () => Promise<void>;
   setTab: (t: Tab) => void;
@@ -37,6 +45,8 @@ interface State {
   toggleTheme: () => void;
   setSidebar: (open: boolean) => void;
   showSetupFlow: (show: boolean) => void;
+  runCommand: (slug: string, command: string, args?: string[]) => Promise<void>;
+  closeCommandModal: () => void;
 }
 
 let toastSeq = 1;
@@ -52,6 +62,7 @@ export const useStore = create<State>((set, get) => ({
   sidebarOpen: false,
   theme: (localStorage.getItem("ga-theme") as "dark" | "light") ?? "dark",
   toasts: [],
+  commandModal: null,
 
   async init() {
     document.documentElement.setAttribute("data-theme", get().theme);
@@ -143,5 +154,19 @@ export const useStore = create<State>((set, get) => ({
     document.documentElement.setAttribute("data-theme", next);
     localStorage.setItem("ga-theme", next);
     set({ theme: next });
+  },
+
+  async runCommand(slug: string, command: string, args: string[] = []) {
+    set({ commandModal: { command, loading: true } });
+    try {
+      const r = await api.sendCommand(slug, command, args);
+      set({ commandModal: { command, text: r.text || `${command} выполнено`, loading: false } });
+    } catch (e) {
+      set({ commandModal: { command, error: (e as Error)?.message ?? "Неизвестная ошибка", loading: false } });
+    }
+  },
+
+  closeCommandModal() {
+    set({ commandModal: null });
   }
 }));

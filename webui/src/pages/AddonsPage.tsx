@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useStore } from "../lib/store";
-import { api, type AddonManifest, type InstalledAddon } from "../lib/api";
+import { api, type AddonManifest, type InstalledAddon, type AddonSetting } from "../lib/api";
 
 const TYPE_LABELS: Record<string, string> = {
   fix: "Фикс",
@@ -182,27 +182,131 @@ export function AddonsPage() {
         <div className="grid cols-2">
           {installed.length === 0 && <div className="empty"><div className="em-icon">◉</div>Не установлено ни одного аддона.</div>}
           {installed.map(it => (
-            <div key={it.manifest.id} className="addon-card">
-              <div className="head">
-                <div className="icon-wrap" style={{ background: TYPE_COLOR[it.manifest.type] }}>{TYPE_LABELS[it.manifest.type]?.[0]}</div>
-                <div>
-                  <h3>{it.manifest.name}</h3>
-                  <div className="meta">{TYPE_LABELS[it.manifest.type]} · v{it.manifest.version} · {new Date(it.installedAt).toLocaleDateString("ru-RU")}</div>
-                </div>
-              </div>
-              <p>{it.manifest.description}</p>
-              <div className="actions">
-                <label className="toggle">
-                  <input type="checkbox" checked={it.enabled} onChange={(e) => void toggleEnabled(it.manifest.id, e.target.checked)} />
-                  <span className="track"><span className="knob" /></span>
-                  <span>{it.enabled ? "Включён" : "Выключен"}</span>
-                </label>
-                <button className="btn tiny danger" onClick={() => void uninstall(it.manifest.id)}>Удалить</button>
-              </div>
-            </div>
+            <InstalledAddonCard
+              key={it.manifest.id}
+              addon={it}
+              onToggle={toggleEnabled}
+              onUninstall={uninstall}
+              onRefresh={refresh}
+            />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function InstalledAddonCard({ addon, onToggle, onUninstall, onRefresh }: {
+  addon: InstalledAddon;
+  onToggle: (id: string, enabled: boolean) => Promise<void>;
+  onUninstall: (id: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+}) {
+  const toast = useStore(s => s.toast);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsValues, setSettingsValues] = useState<Record<string, string | number | boolean>>({});
+  const [saving, setSaving] = useState(false);
+
+  const settings = addon.manifest.settings ?? [];
+  const hasSettings = settings.length > 0;
+
+  const initSettings = useCallback(() => {
+    const vals: Record<string, string | number | boolean> = {};
+    for (const s of settings) {
+      vals[s.key] = addon.settingsValues?.[s.key] ?? s.default ?? (s.type === "boolean" ? false : s.type === "number" ? 0 : "");
+    }
+    setSettingsValues(vals);
+  }, [addon, settings]);
+
+  useEffect(() => { initSettings(); }, [initSettings]);
+
+  async function saveSettings() {
+    setSaving(true);
+    try {
+      await api.updateAddonSettings(addon.manifest.id, settingsValues);
+      toast("Настройки сохранены", "success");
+      setShowSettings(false);
+      await onRefresh();
+    } catch (e) {
+      toast(`Ошибка: ${(e as Error)?.message}`, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateSetting(key: string, value: string | number | boolean) {
+    setSettingsValues(prev => ({ ...prev, [key]: value }));
+  }
+
+  return (
+    <div className="addon-card">
+      <div className="head">
+        <div className="icon-wrap" style={{ background: TYPE_COLOR[addon.manifest.type] }}>{TYPE_LABELS[addon.manifest.type]?.[0]}</div>
+        <div>
+          <h3>{addon.manifest.name}</h3>
+          <div className="meta">{TYPE_LABELS[addon.manifest.type]} · v{addon.manifest.version} · {new Date(addon.installedAt).toLocaleDateString("ru-RU")}</div>
+        </div>
+      </div>
+      <p>{addon.manifest.description}</p>
+      <div className="actions">
+        <label className="toggle">
+          <input type="checkbox" checked={addon.enabled} onChange={(e) => void onToggle(addon.manifest.id, e.target.checked)} />
+          <span className="track"><span className="knob" /></span>
+          <span>{addon.enabled ? "Включён" : "Выключен"}</span>
+        </label>
+        {hasSettings && (
+          <button className="btn tiny ghost" onClick={() => { setShowSettings(!showSettings); if (!showSettings) initSettings(); }}>Настройки</button>
+        )}
+        <button className="btn tiny danger" onClick={() => void onUninstall(addon.manifest.id)}>Удалить</button>
+      </div>
+      {showSettings && hasSettings && (
+        <div className="addon-settings">
+          {settings.map(s => (
+            <AddonSettingField
+              key={s.key}
+              setting={s}
+              value={settingsValues[s.key]}
+              onChange={(v) => updateSetting(s.key, v)}
+            />
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button className="btn tiny primary" disabled={saving} onClick={() => void saveSettings()}>
+              {saving ? "Сохраняю…" : "Сохранить"}
+            </button>
+            <button className="btn tiny ghost" onClick={() => setShowSettings(false)}>Отмена</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddonSettingField({ setting, value, onChange }: {
+  setting: AddonSetting;
+  value: string | number | boolean | undefined;
+  onChange: (v: string | number | boolean) => void;
+}) {
+  return (
+    <div className="form-row" style={{ marginBottom: 8 }}>
+      <label>{setting.label}{setting.required ? " *" : ""}</label>
+      {setting.type === "boolean" ? (
+        <label className="toggle">
+          <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />
+          <span className="track"><span className="knob" /></span>
+        </label>
+      ) : setting.type === "select" ? (
+        <select className="select" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
+          <option value="">—</option>
+          {(setting.options ?? []).map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      ) : setting.type === "number" ? (
+        <input className="input" type="number" value={String(value ?? 0)} onChange={(e) => onChange(Number(e.target.value))} />
+      ) : (
+        <input className="input" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />
+      )}
+      {setting.hint && <div className="hint">{setting.hint}</div>}
     </div>
   );
 }

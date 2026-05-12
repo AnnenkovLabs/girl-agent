@@ -16,6 +16,7 @@ export function LogsPage() {
   const activeSlug = useStore(s => s.activeSlug);
   const profiles = useStore(s => s.profiles);
   const toast = useStore(s => s.toast);
+  const runCommand = useStore(s => s.runCommand);
   const showSetupFlow = useStore(s => s.showSetupFlow);
 
   const [events, setEvents] = useState<LogEvent[]>([]);
@@ -99,11 +100,11 @@ export function LogsPage() {
             </div>
           </div>
           <div className="h-actions">
-            <button className="btn tiny" onClick={() => sendCommand("status", toast, activeSlug)}>:status</button>
-            <button className="btn tiny" onClick={() => sendCommand("why", toast, activeSlug)}>:why</button>
-            <button className="btn tiny" onClick={() => sendCommand("wake", toast, activeSlug)}>:wake</button>
-            <button className="btn tiny" onClick={() => sendCommand("debug", toast, activeSlug)}>:debug</button>
-            <button className="btn tiny danger" onClick={() => { if (confirm("Сбросить relationship?")) sendCommand("reset", toast, activeSlug); }}>:reset</button>
+            <button className="btn tiny" onClick={() => void runCommand(activeSlug, "status")}>:status</button>
+            <button className="btn tiny" onClick={() => void runCommand(activeSlug, "why")}>:why</button>
+            <button className="btn tiny" onClick={() => void runCommand(activeSlug, "wake")}>:wake</button>
+            <button className="btn tiny" onClick={() => void runCommand(activeSlug, "debug")}>:debug</button>
+            <button className="btn tiny danger" onClick={() => { if (confirm("Сбросить relationship?")) void runCommand(activeSlug, "reset"); }}>:reset</button>
           </div>
         </div>
         {score && (
@@ -186,15 +187,6 @@ export function LogsPage() {
       )}
     </div>
   );
-}
-
-async function sendCommand(cmd: string, toast: (t: string, k?: "success" | "error" | "info") => void, slug: string) {
-  try {
-    const r = await api.sendCommand(slug, cmd);
-    toast(r.text || `${cmd} выполнено`, "success");
-  } catch (e) {
-    toast(`Команда ${cmd} не выполнена: ${(e as Error)?.message}`, "error");
-  }
 }
 
 function statusLabel(s: string): string {

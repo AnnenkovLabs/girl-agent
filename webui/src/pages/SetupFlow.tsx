@@ -377,13 +377,16 @@ export function SetupFlow() {
     if (!cfg) return;
     await refreshProfiles();
     await selectProfile(cfg.slug);
-    if (d.mode === "simple" || d.personaNotes) {
-      await generatePersona(cfg.slug);
+    // Всегда генерируем персону — это ключевой шаг
+    await generatePersona(cfg.slug);
+    try {
+      await api.applyProfile(cfg.slug);
+      toast("Рантайм запущен", "success");
+    } catch (e) {
+      toast(`Запуск не удался — проверь токены: ${(e as Error)?.message}`, "error");
     }
     showSetupFlow(false);
     setTab("logs");
-    try { await api.applyProfile(cfg.slug); }
-    catch (e) { toast(`Запуск не удался — проверь токены: ${(e as Error)?.message}`, "error"); }
   }
 
   function next() {
@@ -807,14 +810,38 @@ export function SetupFlow() {
 
         {currentStep === "ready" && (
           <>
-            <h1 className="setup-title">Всё готово 🎉</h1>
-            <p className="setup-subtitle">Создаю профиль и запускаю рантайм. Если включена генерация персоны — это займёт около минуты.</p>
-            <div className="form-row">
-              <div><strong>{d.name}</strong>, {d.age}, {d.nationality}, {d.tz}</div>
-              <div><strong>TG:</strong> {d.tgMode === "bot" ? `bot (token ${d.botToken ? "ok" : "missing"})` : `userbot (${d.sessionString ? "session ok" : d.apiId ? "creds ok, no session" : "missing"})`}</div>
-              <div><strong>LLM:</strong> {d.llmPresetId} / {d.llmModel}</div>
-              <div><strong>Стадия:</strong> {stages.find(s => s.id === d.stage)?.label}</div>
-            </div>
+            {d.generating ? (
+              <>
+                <h1 className="setup-title">Генерация персоны…</h1>
+                <p className="setup-subtitle">LLM создаёт личность, стиль речи, границы и расписание. Обычно ~30-60 секунд.</p>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "32px 0" }}>
+                  <div className="spinner" />
+                  <div style={{ color: "var(--ga-text-dim)", fontSize: 13 }}>Генерируем persona.md, speech.md, boundaries.md…</div>
+                </div>
+              </>
+            ) : d.generated ? (
+              <>
+                <h1 className="setup-title">Персона создана</h1>
+                <p className="setup-subtitle">Профиль готов и рантайм запущен.</p>
+                <div className="form-row">
+                  <div><strong>{d.name}</strong>, {d.age}, {d.nationality}, {d.tz}</div>
+                  <div><strong>LLM:</strong> {d.llmPresetId} / {d.llmModel}</div>
+                  <div><strong>Стадия:</strong> {stages.find(s => s.id === d.stage)?.label}</div>
+                  <div style={{ color: "var(--ga-success, #7ce9a0)", marginTop: 8 }}>Персона, стиль речи и расписание сгенерированы.</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <h1 className="setup-title">Всё готово</h1>
+                <p className="setup-subtitle">Создаю профиль, генерирую персону через LLM и запускаю рантайм.</p>
+                <div className="form-row">
+                  <div><strong>{d.name}</strong>, {d.age}, {d.nationality}, {d.tz}</div>
+                  <div><strong>TG:</strong> {d.tgMode === "bot" ? `bot (token ${d.botToken ? "ok" : "missing"})` : `userbot (${d.sessionString ? "session ok" : d.apiId ? "creds ok, no session" : "missing"})`}</div>
+                  <div><strong>LLM:</strong> {d.llmPresetId} / {d.llmModel}</div>
+                  <div><strong>Стадия:</strong> {stages.find(s => s.id === d.stage)?.label}</div>
+                </div>
+              </>
+            )}
           </>
         )}
 
