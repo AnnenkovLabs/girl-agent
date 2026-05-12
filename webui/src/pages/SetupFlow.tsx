@@ -284,8 +284,6 @@ export function SetupFlow() {
           needs2fa: false
         });
         toast("Логин успешен", "success");
-        // Следующий шаг
-        setD(s => ({ ...s, step: s.step + 1 }));
       }
     } catch (e) {
       patch({ verifying: false, tgError: (e as Error)?.message });
@@ -306,7 +304,6 @@ export function SetupFlow() {
         needs2fa: false
       });
       toast("Логин успешен", "success");
-      setD(s => ({ ...s, step: s.step + 1 }));
     } catch (e) {
       patch({ verifying: false, tgError: (e as Error)?.message });
       toast(`Ошибка пароля: ${(e as Error)?.message}`, "error");
@@ -767,7 +764,7 @@ export function SetupFlow() {
             <div className="grid cols-2">
               <div className="form-row">
                 <label>Засыпает в: {d.sleepFrom}:00</label>
-                <input type="range" min={20} max={26} className="range" value={d.sleepFrom > 23 ? d.sleepFrom - 24 : d.sleepFrom} onChange={e => set("sleepFrom", (Number(e.target.value) + 24) % 24)} />
+                <input type="range" min={20} max={26} className="range" value={d.sleepFrom < 12 ? d.sleepFrom + 24 : d.sleepFrom} onChange={e => set("sleepFrom", Number(e.target.value) % 24)} />
                 <div className="hint">обычно 23–02 ночи</div>
               </div>
               <div className="form-row">
