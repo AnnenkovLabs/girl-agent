@@ -16,8 +16,14 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN apk add --no-cache python3 make g++ \
     && npm ci --no-audit --no-fund
+
+# WebUI dependencies
+COPY webui/package.json webui/package-lock.json* ./webui/
+RUN cd webui && npm ci --no-audit --no-fund
+
 COPY tsconfig.json tsup.config.ts ./
 COPY src ./src
+COPY webui ./webui
 RUN npm run build
 
 # ---- runtime stage (small) ----
