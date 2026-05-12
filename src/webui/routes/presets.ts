@@ -20,7 +20,9 @@ export function registerPresetRoutes(r: Router): void {
       recommended: !!p.recommended,
       oauth: !!p.oauth,
       hint: p.hint,
-      custom: !!p.custom
+      custom: !!p.custom,
+      disabled: !!(p as { disabled?: boolean }).disabled,
+      disabledReason: (p as { disabledReason?: string }).disabledReason
     }))
   }));
 
@@ -50,9 +52,9 @@ export function registerPresetRoutes(r: Router): void {
 
   r.get("/api/presets/timezones", ({ searchParams }) => {
     const q = searchParams.get("q") ?? "";
-    const limit = Math.max(1, Math.min(100, Number(searchParams.get("limit") ?? 30)));
-    if (q) return { zones: findTzByQuery(q, limit) };
-    return { zones: TIMEZONES.slice(0, limit) };
+    // Без поиска — возвращаем все таймзоны (UA → CIS → RU), фронту нужен полный список.
+    const all = q ? findTzByQuery(q, 200) : TIMEZONES;
+    return { zones: all.map(t => ({ iana: t.iana, gmtWinter: t.gmtWinter, city: t.city, country: t.country, aliases: t.aliases, group: t.group })) };
   });
 
   r.get("/api/presets/names", ({ searchParams }) => {

@@ -167,4 +167,29 @@ export interface BehaviorTickResult {
   intent: "reply" | "ignore" | "short" | "left-on-read" | "leave-chat" | "reaction-only";
   /** Опциональная TG-реакция на его сообщение. Девушки 2026 чаще реагируют чем шлют эмодзи в тексте. Один символ. */
   reaction?: string;
+  /**
+   * Смещение от текущего входящего сообщения, которое нужно прореагировать.
+   * 0 = текущее (default), 1 = предыдущее его сообщение, ... до 9.
+   * Девушки в TG иногда реагируют на более раннее сообщение, которое их зацепило.
+   */
+  reactionTargetOffset?: number;
+  /**
+   * Если выставлено — после отправки сообщения девушка решила его отредактировать.
+   * (редко и в основном при опечатках / выпавшем т 9 / изменении решения)
+   */
+  selfEdit?: {
+    /** Номер сообщения из буля отправленных (0 = последнее, 1 = предпоследнее...). */
+    targetOffset: number;
+    newText: string;
+    reason?: string;
+  };
+}
+
+export type DeletionAwareness = "saw-and-read" | "saw-not-read" | "missed";
+
+export interface DeletedMessageContext {
+  deletedText: string;
+  awareness: DeletionAwareness;
+  /** Как давно (в секундах) было удалено. */
+  ageSec: number;
 }

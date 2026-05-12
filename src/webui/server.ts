@@ -10,6 +10,7 @@ import { registerPresetRoutes } from "./routes/presets.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerAddonRoutes } from "./routes/addons.js";
 import { registerAssistantRoutes } from "./routes/assistant.js";
+import { registerTgAuthRoutes } from "./routes/tg-auth.js";
 import { listProfiles, readConfig } from "../storage/md.js";
 
 export interface WebUIServerOptions {
@@ -39,6 +40,7 @@ function buildRouter(): Router {
   registerSystemRoutes(r);
   registerAddonRoutes(r);
   registerAssistantRoutes(r);
+  registerTgAuthRoutes(r);
   return r;
 }
 

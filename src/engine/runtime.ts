@@ -26,6 +26,11 @@ import { looksLikeJailbreak, sanitizeModelReply, silentErrorLabel } from "./secu
 import { addStickerToLibrary, pickSticker } from "./stickers.js";
 import { EventEmitter } from "node:events";
 import { applyLLMUpdate, describeLLM } from "../config/llm-update.js";
+import { injectTypos, pickTypoIntensity } from "./typos.js";
+import { decideStageTransition, shouldRunStageTransitionCheck } from "./stage-transitions.js";
+import { classifyDeletionAwareness, shouldRespondToDeletion, buildDeletionPromptContext, isInHistory as deletionInHistory } from "./deletion-handler.js";
+import { decideEmojiReactionResponse, shouldThrottleEmojiReactions, isToxicReactionAboutHerSelf } from "./emoji-reaction-handler.js";
+import type { DeletedMessageContext } from "../types.js";
 
 export interface RuntimeEvent {
   type: "incoming" | "outgoing" | "ignored" | "score" | "info" | "error";
@@ -79,7 +84,15 @@ export class Runtime extends EventEmitter {
   private forcedWakeUntil = 0;
   private lastSentByChat = new Map<string, number>();
   /** Все отправленные сообщения (id + ts) для команды amnesia */
-  private sentMessages: Array<{ key: string; chatId: number | string; messageId: number; ts: number }> = [];
+  private sentMessages: Array<{ key: string; chatId: number | string; messageId: number; ts: number; text?: string }> = [];
+  /** История входящих message-id по каждому чату (для Task #3: реакция на любое из последних 10). */
+  private incomingMsgIds = new Map<string, Array<{ messageId: number; ts: number; text: string }>>();
+  /** Счётчик сообщений в текущей стадии (для Task #4: smart stage transitions). */
+  private stageStats = new Map<string, { herMsgs: number; hisMsgs: number; ignoresInStage: number; lastCheckAt: number; stageEnteredAt: number }>();
+  /** Проверено ли stage-transition на этом входящем сообщении. */
+  private msgsSinceStageCheck = 0;
+  /** Счётчик эмодзи-реакций в последние 60c для anti-flood. */
+  private recentEmojiReactionTs: number[] = [];
   private pendingReplyTimers = new Map<string, NodeJS.Timeout>();
   private pendingReplySeq = new Map<string, number>();
   private pendingReplyIncoming = new Map<string, IncomingMessage>();
@@ -312,8 +325,18 @@ export class Runtime extends EventEmitter {
     if (this.userbotActionAvailable("readHistory")) {
       await this.tg.readHistory?.(chatId).catch(() => {});
     }
+    // Task #2: выбираем плотность опечаток на всё сообщение (по одному решению на серию пузырей).
+    const commProfile = normalizeCommunicationProfile(this.cfg);
+    const typoIntensity = pickTypoIntensity({
+      messageStyle: commProfile.messageStyle,
+      vibe: this.cfg.stage === "long-term" || this.cfg.stage === "dating-stable" ? "warm" : undefined,
+      bubbles: bubbles.length
+    });
     for (let i = 0; i < bubbles.length; i++) {
-      const text = bubbles[i]!;
+      const rawText = bubbles[i]!;
+      const text = typoIntensity > 0
+        ? injectTypos(rawText, { intensity: typoIntensity, maxPerWord: 1 })
+        : rawText;
       if (isDuplicateAssistantBubble(hist, text)) {
         this.emit("event", { type: "info", text: `skip duplicate bubble: "${text.slice(0, 60)}"`, chatId } as RuntimeEvent);
         continue;
@@ -334,10 +357,31 @@ export class Runtime extends EventEmitter {
       const now = Date.now();
       if (messageId) {
         this.lastSentByChat.set(this.histKey(chatId), messageId);
-        this.sentMessages.push({ key: this.histKey(chatId), chatId, messageId, ts: now });
+        this.sentMessages.push({ key: this.histKey(chatId), chatId, messageId, ts: now, text });
+        // Task #1: если была опечатка (text отличается от rawText) — иногда исправляем через пару секунд.
+        if (text !== rawText && this.tg.editText && Math.random() < 0.25) {
+          const fixDelay = 2_000 + Math.random() * 6_000;
+          setTimeout(async () => {
+            try {
+              await this.tg.editText!(chatId, messageId, rawText);
+              this.emit("event", { type: "info", text: `edit-self: "${text.slice(0, 30)}" → "${rawText.slice(0, 30)}"`, chatId } as RuntimeEvent);
+              if (scope === "primary") {
+                await appendSessionLog(this.cfg.slug, this.cfg.tz, `  ~ edit "${text.slice(0, 40)}" → "${rawText.slice(0, 40)}"`).catch(() => {});
+              }
+              // Обновляем буфер sentMessages и history.
+              const rec = this.sentMessages.find(s => s.messageId === messageId);
+              if (rec) rec.text = rawText;
+              const histEntry = hist[hist.length - 1];
+              if (histEntry && histEntry.role === "assistant" && histEntry.content === text) {
+                histEntry.content = rawText;
+              }
+            } catch { /* not supported / too old */ }
+          }, fixDelay).unref?.();
+        }
       }
       hist.push({ role: "assistant", content: text, ts: now });
       this.lastHerReplyTs.set(this.histKey(chatId), Date.now());
+      this.bumpStageStats("her");
       this.emit("event", { type: "outgoing", text, chatId } as RuntimeEvent);
       if (scope === "primary") await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> она: ${text}`);
       sent.push(text);
@@ -485,6 +529,15 @@ export class Runtime extends EventEmitter {
     try {
       if (this.paused) return;
       if (!m.isPrivate) return; // персонаж работает только в личных чатах — и для bot, и для userbot
+      // === Ранние ветки: удаление (Task #15) и эмодзи-реакция (Task #16) ===
+      if (m.deletion) {
+        await this.handleDeletedMessage(m).catch(e => this.emit("event", { type: "error", text: `handleDeletedMessage: ${silentErrorLabel(e)}` } as RuntimeEvent));
+        return;
+      }
+      if (m.emojiReaction) {
+        await this.handleEmojiReaction(m).catch(e => this.emit("event", { type: "error", text: `handleEmojiReaction: ${silentErrorLabel(e)}` } as RuntimeEvent));
+        return;
+      }
       await this.switchPrimaryAfterDumped(m.fromId);
       await this.ensureOwner(m.fromId);
       const isPrimary = this.isPrimaryFrom(m.fromId);
@@ -496,6 +549,8 @@ export class Runtime extends EventEmitter {
         this.emit("event", { type: "ignored", text: m.text, reason: "dumped" } as RuntimeEvent);
         return;
       }
+      this.recordIncomingForReactions(m, this.histKey(m.chatId));
+      this.bumpStageStats("his");
       const key = this.histKey(m.chatId);
       const seq = (this.incomingSeq.get(key) ?? 0) + 1;
       this.incomingSeq.set(key, seq);
@@ -666,15 +721,24 @@ export class Runtime extends EventEmitter {
 
     // TG-реакция (опционально, до или вместо ответа)
     if (tick.reaction) {
+      // Task #3: реакция может быть на любое из последних 10 его сообщений, не только на текущее.
+      const target = this.pickReactionTarget(this.histKey(m.chatId), m.messageId, tick.reactionTargetOffset ?? 0);
       const reactDelay = Math.min(tick.delaySec, 30) * 1000 * (tick.shouldReply ? 0.3 : 1);
       setTimeout(async () => {
         if (this.userbotActionAvailable("readHistory")) {
           await this.tg.readHistory?.(m.chatId).catch(() => {});
         }
-        await this.tg.setReaction(m.chatId, m.messageId, tick.reaction!).catch(() => {});
-        this.emit("event", { type: "info", text: `реакция ${tick.reaction} на "${incomingText.slice(0, 40)}"` } as RuntimeEvent);
-        appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> reaction ${tick.reaction}`).catch(() => {});
+        await this.tg.setReaction(m.chatId, target.messageId, tick.reaction!).catch(() => {});
+        const offsetTag = target.offset > 0 ? ` (offset=${target.offset})` : "";
+        this.emit("event", { type: "info", text: `реакция ${tick.reaction}${offsetTag} на "${target.text.slice(0, 40)}"` } as RuntimeEvent);
+        appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> reaction ${tick.reaction}${offsetTag}`).catch(() => {});
       }, reactDelay).unref?.();
+    }
+
+    // Task #4: умная смена стадии (проверка раз в 5 сообщений).
+    this.msgsSinceStageCheck++;
+    if (shouldRunStageTransitionCheck(this.msgsSinceStageCheck)) {
+      this.checkStageTransition().catch(() => {});
     }
 
     if (!tick.shouldReply) {
@@ -1363,6 +1427,236 @@ export class Runtime extends EventEmitter {
       }
     } catch (e) {
       this.emit("event", { type: "error", text: `AI tool failed ${cmd}: ${(e as Error).message}` } as RuntimeEvent);
+    }
+  }
+
+  // ============================================================================
+  // Task #3: трекинг последних 10 входящих + выбор цели для реакции
+  // ============================================================================
+
+  private recordIncomingForReactions(m: IncomingMessage, key: string): void {
+    if (!m.messageId || !m.isPrivate) return;
+    const arr = this.incomingMsgIds.get(key) ?? [];
+    arr.push({ messageId: m.messageId, ts: Date.now(), text: m.text ?? "" });
+    while (arr.length > 10) arr.shift();
+    this.incomingMsgIds.set(key, arr);
+  }
+
+  /**
+   * Выбирает messageId, на который ставим реакцию. По умолчанию (offset=0) — текущее.
+   * Если LLM попросил offset 1..9 — берём более ранее из последних 10.
+   * Безопасный fallback на текущее сообщение если буфер пуст.
+   */
+  private pickReactionTarget(key: string, currentMessageId: number, offset: number): { messageId: number; offset: number; text: string } {
+    const arr = this.incomingMsgIds.get(key) ?? [];
+    if (offset <= 0 || arr.length === 0) {
+      return { messageId: currentMessageId, offset: 0, text: arr[arr.length - 1]?.text ?? "" };
+    }
+    // arr — хронологически: первое = самое старое, последнее = текущее.
+    const idx = Math.max(0, arr.length - 1 - offset);
+    const target = arr[idx];
+    if (!target) return { messageId: currentMessageId, offset: 0, text: "" };
+    return { messageId: target.messageId, offset: arr.length - 1 - idx, text: target.text };
+  }
+
+  // ============================================================================
+  // Task #4: проверка smart-смены стадии раз в N сообщений
+  // ============================================================================
+
+  private bumpStageStats(who: "her" | "his"): void {
+    const stage = this.cfg.stage;
+    let s = this.stageStats.get(stage);
+    if (!s) {
+      s = { herMsgs: 0, hisMsgs: 0, ignoresInStage: 0, lastCheckAt: 0, stageEnteredAt: Date.now() };
+      this.stageStats.set(stage, s);
+    }
+    if (who === "her") s.herMsgs++; else s.hisMsgs++;
+  }
+
+  private async checkStageTransition(): Promise<void> {
+    if (this.paused) return;
+    this.msgsSinceStageCheck = 0;
+    try {
+      const rel = await readRelationship(this.cfg.slug);
+      const s = this.stageStats.get(this.cfg.stage);
+      const decision = decideStageTransition({
+        currentStage: this.cfg.stage,
+        score: rel.score,
+        herMessagesInStage: s?.herMsgs ?? 0,
+        hisMessagesInStage: s?.hisMsgs ?? 0,
+        ignoresInStage: s?.ignoresInStage ?? 0,
+        hasActiveConflict: false
+      });
+      if (!decision) return;
+      const oldStage = this.cfg.stage;
+      this.cfg.stage = decision.next;
+      await writeConfig(this.cfg);
+      await writeRelationship(this.cfg.slug, { ...rel, stage: decision.next });
+      await maybeAdvanceRelationshipTimeline(this.cfg, oldStage, decision.next);
+      this.stageStats.set(decision.next, { herMsgs: 0, hisMsgs: 0, ignoresInStage: 0, lastCheckAt: 0, stageEnteredAt: Date.now() });
+      this.emit("event", { type: "info", text: `stage ${oldStage} → ${decision.next} (${decision.reason})` } as RuntimeEvent);
+      await appendSessionLog(this.cfg.slug, this.cfg.tz, `[stage-transition] ${oldStage} → ${decision.next} (${decision.reason})`);
+    } catch { /* swallow */ }
+  }
+
+  // ============================================================================
+  // Task #15: обработка удалённого сообщения юзера
+  // ============================================================================
+
+  private async handleDeletedMessage(m: IncomingMessage): Promise<void> {
+    if (!m.deletion) return;
+    const key = this.histKey(m.chatId);
+    const hist = await this.historyFor(key, m.fromId, this.isPrimaryFrom(m.fromId));
+    const inHistory = deletionInHistory(hist, m.deletion.text);
+    const lastUserTs = this.lastUserMsgTs.get(key) ?? 0;
+    const lastHerTs = this.lastHerReplyTs.get(key) ?? 0;
+    const hasPendingReply = this.pendingReplyTimers.has(key);
+    const activeDialog = lastHerTs > 0 && Date.now() - lastHerTs < 5 * 60 * 1000;
+    const awareness = classifyDeletionAwareness({
+      deletedText: m.deletion.text,
+      ageSec: m.deletion.ageSec,
+      lastReadByHerTs: lastHerTs,
+      receivedAtMs: lastUserTs,
+      hasPendingReply,
+      activeDialog
+    });
+    const ctx: DeletedMessageContext = {
+      deletedText: m.deletion.text,
+      awareness,
+      ageSec: m.deletion.ageSec
+    };
+    this.emit("event", { type: "info", text: `delete: ${awareness}${m.deletion.text ? ` "${m.deletion.text.slice(0, 40)}"` : ""}` } as RuntimeEvent);
+    if (this.isPrimaryFrom(m.fromId)) {
+      await appendSessionLog(this.cfg.slug, this.cfg.tz, `[deletion ${awareness}] он удалил: "${m.deletion.text.slice(0, 80)}"`);
+    }
+    if (!shouldRespondToDeletion(ctx)) return;
+    if (!inHistory && awareness === "saw-and-read") {
+      // Странная ситуация: помечена как saw-and-read, но текста в истории нет → "saw-not-read"
+      ctx.awareness = "saw-not-read";
+    }
+    // Отменяем pending-reply, если она ещё думает: контекст изменился, реакция теперь про удаление.
+    if (this.pendingReplyTimers.has(key)) {
+      clearTimeout(this.pendingReplyTimers.get(key)!);
+      this.pendingReplyTimers.delete(key);
+    }
+    const scope: RelationshipScope = this.isPrimaryFrom(m.fromId) ? "primary" : "acquaintance";
+    const realism = scope === "primary" ? await loadRealismContext(this.cfg, m.deletion.text) : undefined;
+    const sys = await buildSystemPrompt(this.cfg, {
+      dailyLife: this.dailyLife,
+      incoming: m.deletion.text,
+      relationshipScope: scope,
+      committedPrimary: this.primaryIsCommitted(),
+      realism,
+      tgUsername: this.tgSelf.username,
+      tgDisplayName: this.tgSelf.displayName
+    });
+    const delaySec = 4 + Math.random() * 12;
+    setTimeout(async () => {
+      try {
+        const raw = await this.llm.chat([
+          { role: "system", content: `${sys}\n\n${buildDeletionPromptContext(this.cfg, ctx)}` },
+          ...hist.slice(-10).map(t => ({ role: t.role, content: t.content }))
+        ], { temperature: 0.9, maxTokens: 600 });
+        const reply = sanitizeModelReply(raw);
+        if (!reply) return;
+        const bubbles = reply.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean).slice(0, 2);
+        if (!bubbles.length) return;
+        await this.sendBubbles(m.chatId, bubbles, hist, scope, true);
+      } catch (e) {
+        this.emit("event", { type: "error", text: `deletion-reply: ${silentErrorLabel(e)}` } as RuntimeEvent);
+      }
+    }, delaySec * 1000).unref?.();
+  }
+
+  // ============================================================================
+  // Task #16 / Issue #76: обработка эмодзи-реакции юзера на её сообщения
+  // ============================================================================
+
+  private async handleEmojiReaction(m: IncomingMessage): Promise<void> {
+    if (!m.emojiReaction) return;
+    const now = Date.now();
+    // Anti-flood — учитываем только за последнюю минуту.
+    this.recentEmojiReactionTs = this.recentEmojiReactionTs.filter(ts => now - ts < 60_000);
+    this.recentEmojiReactionTs.push(now);
+    if (shouldThrottleEmojiReactions(this.recentEmojiReactionTs.length)) {
+      this.emit("event", { type: "info", text: `emoji-reaction ${m.emojiReaction.emoji} — throttled (flood)` } as RuntimeEvent);
+      return;
+    }
+    const isPrimary = this.isPrimaryFrom(m.fromId);
+    if (!isPrimary) return; // эмодзи от посторонних игнорим
+    const key = this.histKey(m.chatId);
+    const hist = await this.historyFor(key, m.fromId, isPrimary);
+    // Находим её сообщение из sentMessages по messageId.
+    const sentRec = [...this.sentMessages].reverse().find(s => s.messageId === m.emojiReaction!.targetMessageId);
+    let herLastMessageText = sentRec?.text;
+    if (!herLastMessageText) {
+      const lastHer = [...hist].reverse().find(t => t.role === "assistant");
+      herLastMessageText = lastHer?.content;
+    }
+    const rel = await readRelationship(this.cfg.slug);
+    const communication = normalizeCommunicationProfile(this.cfg);
+    let decision = decideEmojiReactionResponse({
+      emoji: m.emojiReaction.emoji,
+      removed: m.emojiReaction.removed,
+      stage: this.cfg.stage,
+      score: rel.score,
+      communication,
+      herLastMessageText
+    });
+    // Если нужен контекстный шаг для токсичной эмодзи — делаем LLM-вызов и пересобираем решение.
+    if (decision.needsToxicContextCheck && herLastMessageText) {
+      const aboutHerSelf = await isToxicReactionAboutHerSelf(this.llm, herLastMessageText, m.emojiReaction.emoji).catch(() => true);
+      decision = decideEmojiReactionResponse({
+        emoji: m.emojiReaction.emoji,
+        removed: m.emojiReaction.removed,
+        stage: this.cfg.stage,
+        score: rel.score,
+        communication,
+        herLastMessageText,
+        toxicContextResolved: { aboutHerSelf }
+      });
+    }
+    this.emit("event", { type: "info", text: `emoji-react ${m.emojiReaction.emoji} (${decision.category}/${decision.intent}): ${decision.reason}` } as RuntimeEvent);
+    if (isPrimary) {
+      await appendSessionLog(this.cfg.slug, this.cfg.tz, `[emoji-react] он(${m.fromId}): ${m.emojiReaction.emoji} → ${decision.intent} (${decision.reason})`);
+    }
+    if (decision.moodDelta && Object.keys(decision.moodDelta).length > 0) {
+      const newScore = applyMoodDelta(rel.score, decision.moodDelta);
+      await writeRelationship(this.cfg.slug, { ...rel, score: newScore, stage: this.cfg.stage });
+      this.emit("event", { type: "score", score: newScore } as RuntimeEvent);
+    }
+    if (decision.intent === "react-back" && decision.reactBackEmoji) {
+      const delay = 4_000 + Math.random() * 12_000;
+      setTimeout(async () => {
+        await this.tg.setReaction(m.chatId, m.emojiReaction!.targetMessageId, decision.reactBackEmoji!).catch(() => {});
+      }, delay).unref?.();
+      return;
+    }
+    if (decision.intent === "reply-text" && decision.llmContext) {
+      const scope: RelationshipScope = "primary";
+      const sys = await buildSystemPrompt(this.cfg, {
+        dailyLife: this.dailyLife,
+        relationshipScope: scope,
+        committedPrimary: this.primaryIsCommitted(),
+        tgUsername: this.tgSelf.username,
+        tgDisplayName: this.tgSelf.displayName
+      });
+      const delaySec = 10 + Math.random() * 40;
+      setTimeout(async () => {
+        try {
+          const raw = await this.llm.chat([
+            { role: "system", content: `${sys}\n\n${decision.llmContext}` },
+            ...hist.slice(-8).map(t => ({ role: t.role, content: t.content }))
+          ], { temperature: 0.9, maxTokens: 400 });
+          const reply = sanitizeModelReply(raw);
+          if (!reply) return;
+          const bubbles = reply.split(/\n*---\n*/).map(s => s.trim()).filter(Boolean).slice(0, 2);
+          if (!bubbles.length) return;
+          await this.sendBubbles(m.chatId, bubbles, hist, scope, true);
+        } catch (e) {
+          this.emit("event", { type: "error", text: `emoji-reply: ${silentErrorLabel(e)}` } as RuntimeEvent);
+        }
+      }, delaySec * 1000).unref?.();
     }
   }
 }

@@ -74,6 +74,7 @@ ${reactionsHint}
   "bubbles": число (1..6),
   "typing": boolean,
   "reaction": "" или ОДИН эмодзи из доступного списка выше. Не из запрещённого!,
+  "reactionTargetOffset": число 0..9. 0 = реагируешь на САМОЕ НОВОЕ его сообщение (по умолчанию), 1 = предыдущее его, ... до 9. Девушки в тг иногда реагируют на более раннее сообщение в бурсте — например он рассказал две вещи, она вернулась позже и поставила реакцию на первое. Чаще всего 0; не используй без reaction.,
   "ignoreReason": строка или "",
   "moodDelta": { "interest": число, "trust": число, "attraction": число, "annoyance": число, "cringe": число }
 }
@@ -206,6 +207,11 @@ export async function behaviorTick(
     if (reaction) {
       reaction = sanitizeReaction(reaction, cfg.stage, rel.score);
     }
+    const reactionTargetOffset = Math.min(9, Math.max(0,
+      typeof parsed.reactionTargetOffset === "number" && Number.isFinite(parsed.reactionTargetOffset)
+        ? Math.floor(parsed.reactionTargetOffset)
+        : 0
+    ));
 
     let intent = parsed.intent || "reply";
     let shouldReply = !!parsed.shouldReply && intent !== "ignore" && intent !== "left-on-read" && intent !== "reaction-only";
@@ -231,7 +237,8 @@ export async function behaviorTick(
       ignoreReason: parsed.ignoreReason || undefined,
       moodDelta: parsed.moodDelta || {},
       intent,
-      reaction
+      reaction,
+      reactionTargetOffset: reaction ? reactionTargetOffset : 0
     };
   } catch {
     const ignore = Math.random() < stage.defaults.ignoreChance * ignoreMul;

@@ -26,7 +26,35 @@ export function makeBotAdapter(cfg: ProfileConfig): TgAdapter {
         };
         await onMessage(msg);
       });
-      bot.start({ drop_pending_updates: true }).catch(() => {});
+      // Эмодзи-реакции юзера на её сообщения (Issue #76 / Task #16).
+      bot.on("message_reaction", async (ctx) => {
+        const upd = ctx.update.message_reaction as any;
+        if (!upd) return;
+        const newEmoji = (upd.new_reaction ?? []).find((r: any) => r.type === "emoji")?.emoji;
+        const oldEmoji = (upd.old_reaction ?? []).find((r: any) => r.type === "emoji")?.emoji;
+        const removed = !newEmoji && !!oldEmoji;
+        const emoji = newEmoji ?? oldEmoji;
+        if (!emoji) return;
+        const msg: IncomingMessage = {
+          text: "",
+          fromId: upd.user?.id ?? 0,
+          chatId: upd.chat.id,
+          messageId: upd.message_id,
+          isPrivate: upd.chat.type === "private",
+          fromName: upd.user?.first_name,
+          emojiReaction: {
+            emoji,
+            targetMessageId: upd.message_id,
+            removed
+          }
+        };
+        await onMessage(msg).catch(() => {});
+      });
+      // allowed_updates: включаем message_reaction и все базовые подписки.
+      bot.start({
+        drop_pending_updates: true,
+        allowed_updates: ["message", "edited_message", "callback_query", "message_reaction"]
+      }).catch(() => {});
       try {
         const me = await bot.api.getMe();
         selfInfo = {
@@ -56,6 +84,15 @@ export function makeBotAdapter(cfg: ProfileConfig): TgAdapter {
           { type: "emoji", emoji: emoji as any }
         ]);
       } catch { /* not all bots can react */ }
+    },
+    async editText(chatId, messageId, newText) {
+      try {
+        if (hasSpoilers(newText)) {
+          await bot.api.editMessageText(chatId as number, messageId, toHtmlWithSpoilers(newText), { parse_mode: "HTML" });
+        } else {
+          await bot.api.editMessageText(chatId as number, messageId, newText);
+        }
+      } catch { /* msg too old, deleted, no perms etc */ }
     },
     async sendSticker(chatId, fileId) {
       await bot.api.sendSticker(chatId as number, fileId);

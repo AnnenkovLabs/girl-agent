@@ -41,7 +41,18 @@ export function applyLLMUpdate(cfg: ProfileConfig, update: LLMUpdate): string[] 
       ? preset?.baseURL
       : cfg.llm.baseURL;
   const rawModel = update.model ?? (presetChanged ? preset?.defaultModel : cfg.llm.model) ?? "";
-  const model = normalizeModelName(rawModel);
+  let model = normalizeModelName(rawModel);
+  // Issue #75: если модель не подходит к пресету (например, после смены
+  // pre­сета или ручного ввода) — мягко откатываемся на defaultModel пресета,
+  // НЕ роняем процесс. Применяем только если пресет фиксированный (не custom)
+  // и явно перечисляет модели.
+  if (preset && !preset.custom && Array.isArray(preset.models) && preset.models.length > 0 && model && !preset.models.includes(model)) {
+    const fallback = preset.defaultModel || preset.models[0] || "";
+    if (fallback && fallback !== model) {
+      changed.push(`model ${model} не входит в пресет ${preset.name} → fallback ${fallback}`);
+      model = fallback;
+    }
+  }
   const apiKey = update.apiKey !== undefined
     ? update.apiKey
     : presetChanged

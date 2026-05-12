@@ -29,6 +29,7 @@ export interface LLMPreset {
   baseURL?: string; defaultModel: string; models: string[];
   apiKeyRequired: boolean; recommended: boolean; oauth: boolean;
   hint?: string; custom: boolean;
+  disabled?: boolean; disabledReason?: string;
 }
 
 export interface StagePreset {
@@ -154,7 +155,7 @@ export const api = {
   async listStages() { return req<{ stages: StagePreset[] }>("GET", "/api/presets/stages"); },
   async listCommunicationPresets() { return req<{ presets: CommunicationPreset[] }>("GET", "/api/presets/communication"); },
   async listMCPPresets() { return req<{ presets: { id: string; name: string; description: string; ready: boolean; secrets: { key: string; label: string }[] }[] }>("GET", "/api/presets/mcp"); },
-  async listTimezones(q = "") { return req<{ zones: { iana: string; gmtWinter: string; city: string; country: string; aliases: string[] }[] }>("GET", `/api/presets/timezones?q=${encodeURIComponent(q)}`); },
+  async listTimezones(q = "") { return req<{ zones: { iana: string; gmtWinter: string; city: string; country: string; aliases: string[]; group?: "UA" | "CIS" | "RU" }[] }>("GET", `/api/presets/timezones?q=${encodeURIComponent(q)}`); },
   async pickNames(nationality: "RU" | "UA", count = 12) { return req<{ names: string[] }>("GET", `/api/presets/names?nationality=${nationality}&count=${count}`); },
 
   async getVersion() { return req<{ current: string; latest: string | null }>("GET", "/api/system/version"); },
@@ -182,6 +183,23 @@ export const api = {
   },
   async applyAssistantTool(profileSlug: string, tool: { tool: string; args: Record<string, unknown> }) {
     return req<{ ok: true; message: string }>("POST", "/api/assistant/apply-tool", { profileSlug, tool });
+  },
+
+  // === Userbot login (Task #6, #13) ===
+  async tgSendCode(payload: { phone: string; useRemote?: boolean; apiId?: number; apiHash?: string }) {
+    return req<{ method: "remote" | "self"; loginToken?: string; sessionId?: string }>(
+      "POST", "/api/tg/userbot/send-code", payload
+    );
+  },
+  async tgVerifyCode(payload: { code: string; loginToken?: string; sessionId?: string }) {
+    return req<{ sessionString?: string; apiId?: number; apiHash?: string; needs2fa?: true; loginToken?: string; sessionId?: string }>(
+      "POST", "/api/tg/userbot/verify-code", payload
+    );
+  },
+  async tgVerifyPassword(payload: { password: string; loginToken?: string; sessionId?: string }) {
+    return req<{ sessionString: string; apiId: number; apiHash: string }>(
+      "POST", "/api/tg/userbot/verify-password", payload
+    );
   }
 };
 
