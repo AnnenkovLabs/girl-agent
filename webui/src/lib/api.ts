@@ -53,15 +53,16 @@ export interface AddonSetting {
 }
 
 export interface AddonManifest {
-  type: "fix" | "mod" | "persona" | "mcp" | "theme" | "locale";
   id: string; name: string; description: string; version: string;
   author?: string; tags?: string[];
-  configOverrides?: Record<string, unknown>;
-  files?: { path: string; content: string }[];
-  mcp?: { presetId?: string; secrets?: { key: string; label: string }[] };
-  theme?: { vars?: Record<string, string>; css?: string };
-  locale?: { lang: string; strings: Record<string, string> };
+  compatibility?: string;
+  dependencies?: string[];
   settings?: AddonSetting[];
+  icon?: string;
+  homepage?: string;
+  /** downloadUrl для реестра */
+  downloadUrl?: string;
+  /** флаг: уже установлен */
   installed?: boolean;
 }
 
@@ -69,8 +70,9 @@ export interface InstalledAddon {
   manifest: AddonManifest;
   enabled: boolean;
   installedAt: string;
-  source: "registry" | "url" | "local";
+  source: "registry" | "file" | "local";
   settingsValues?: Record<string, string | number | boolean>;
+  installedFiles?: string[];
 }
 
 const BASE = ((): string => {
@@ -173,15 +175,15 @@ export const api = {
   async getVersion() { return req<{ current: string; latest: string | null }>("GET", "/api/system/version"); },
   async getDiagnostics() { return req<{ platform: string; arch: string; node: string; hostname: string; uptime: number; dataRoot: string; ipv4: string[]; memTotalMB: number }>("GET", "/api/system/diagnostics"); },
 
-  async listAddons() { return req<{ available: AddonManifest[]; installed: InstalledAddon[]; builtin: string[] }>("GET", "/api/addons"); },
-  async installAddon(id: string, manifest?: AddonManifest, profileSlug?: string) {
-    return req<{ ok: true; installed: InstalledAddon; applied?: string[] }>("POST", `/api/addons/${encodeURIComponent(id)}/install`, { manifest, profileSlug });
+  async listAddons() { return req<{ available: AddonManifest[]; installed: InstalledAddon[] }>("GET", "/api/addons"); },
+  async installAddon(id: string, profileSlug?: string) {
+    return req<{ ok: true; installed: InstalledAddon; applied: string[] }>("POST", `/api/addons/${encodeURIComponent(id)}/install`, { profileSlug });
   },
   async installAddonFromUrl(url: string, profileSlug?: string) {
-    return req<{ ok: true; installed: InstalledAddon }>("POST", "/api/addons/install-url", { url, profileSlug });
+    return req<{ ok: true; installed: InstalledAddon; applied: string[] }>("POST", "/api/addons/install-url", { url, profileSlug });
   },
-  async previewAddon(manifest: AddonManifest, profileSlug?: string) {
-    return req<{ ok: true; conflicts: string[] }>("POST", "/api/addons/preview", { manifest, profileSlug });
+  async installAddonFromFile(gaaBase64: string, profileSlug?: string) {
+    return req<{ ok: true; installed: InstalledAddon; applied: string[] }>("POST", "/api/addons/install-file", { gaaBase64, profileSlug });
   },
   async uninstallAddon(id: string) {
     return req<{ ok: true }>("DELETE", `/api/addons/${encodeURIComponent(id)}`);

@@ -2,205 +2,196 @@
 
 ## Обзор
 
-Аддоны — модульные расширения girl-agent. Каждый аддон — JSON-файл (манифест) описывающий что он делает и какие данные несёт.
+Аддон — это папка с файлами, которые модифицируют поведение girl-agent: файлы персоны, настройки конфига, CSS-темы, скрипты и т.д.
 
-## Типы аддонов
+Готовый аддон упаковывается в `.gaa` файл (zip-архив) для распространения.
 
-| Тип      | Описание                                                  |
-|----------|-----------------------------------------------------------|
-| `fix`    | Патч для фикса конкретного бага                           |
-| `mod`    | Модификация поведения (расписание, параметры)              |
-| `persona`| Готовая персона: файлы persona.md, speech.md и т.д.       |
-| `mcp`    | MCP-сервер с конфигурацией                                |
-| `theme`  | CSS-тема для WebUI                                        |
-| `locale` | Перевод интерфейса WebUI                                  |
+## Быстрый старт
 
-## Структура манифеста
+```bash
+# 1. Создать шаблон аддона
+npx girl-agent addon init my-addon
 
-```jsonc
+# 2. Отредактировать файлы (см. ниже)
+
+# 3. Упаковать в .gaa
+npx girl-agent addon pack my-addon
+# → my-addon.gaa
+```
+
+## Структура папки аддона
+
+```
+my-addon/
+  manifest.json       # Метаданные (обязательно)
+  files/              # Файлы для копирования в data/<slug>/
+    persona.md        # Персона
+    speech.md         # Стиль речи
+    boundaries.md     # Границы
+    communication.md  # Стиль общения
+    ...               # Любые другие файлы
+  config.patch.json   # Поля для мёрджа в config.json профиля
+  theme.css           # CSS-стили для WebUI
+  install.sh          # Скрипт пост-установки (опционально)
+  README.md           # Документация (опционально)
+```
+
+Все файлы кроме `manifest.json` опциональны — добавляй только то, что нужно.
+
+## manifest.json
+
+```json
 {
-  // === Обязательные поля ===
-  "type": "mod",                    // Тип аддона (см. таблицу)
-  "id": "mod-my-addon",             // Уникальный ID (латиница, дефисы)
-  "name": "Название аддона",        // Человекочитаемое имя
-  "description": "Описание",        // Что делает аддон
-  "version": "1.0.0",               // Версия (semver)
-
-  // === Опциональные мета-поля ===
-  "author": "username",             // Автор
-  "compatibility": ">=0.1.15",      // Совместимая версия girl-agent (semver range)
-  "tags": ["mod", "schedule"],      // Теги для поиска в маркетплейсе
-  "dependencies": ["other-addon"],  // ID других аддонов-зависимостей
-  "icon": "https://...",            // URL иконки
-  "homepage": "https://...",        // Ссылка на документацию
-
-  // === Данные аддона (зависит от type) ===
-  // Подробности ниже
+  "id": "my-addon",
+  "name": "Название аддона",
+  "description": "Что делает аддон",
+  "version": "1.0.0",
+  "author": "username",
+  "compatibility": ">=0.1.15",
+  "tags": ["persona", "mod"],
+  "dependencies": [],
+  "settings": [],
+  "icon": "https://...",
+  "homepage": "https://..."
 }
 ```
 
-## Поля по типам
+### Обязательные поля
 
-### `persona` — готовая персона
+| Поле          | Тип      | Описание                          |
+|---------------|----------|-----------------------------------|
+| `id`          | `string` | Уникальный ID (латиница, дефисы)  |
+| `name`        | `string` | Человекочитаемое название         |
+| `description` | `string` | Описание                          |
+| `version`     | `string` | Версия (semver)                   |
 
-```jsonc
+### Опциональные поля
+
+| Поле            | Тип        | Описание                              |
+|-----------------|------------|---------------------------------------|
+| `author`        | `string`   | Автор                                 |
+| `compatibility` | `string`   | semver range совместимости girl-agent  |
+| `tags`          | `string[]` | Теги для поиска                       |
+| `dependencies`  | `string[]` | ID других аддонов                     |
+| `settings`      | `array`    | Пользовательские настройки (см. ниже) |
+| `icon`          | `string`   | URL иконки                            |
+| `homepage`      | `string`   | Ссылка на документацию                |
+
+## files/ — Файлы профиля
+
+Все файлы из `files/` копируются в `data/<slug>/` при установке. Используй для:
+
+- **persona.md** — описание персоны
+- **speech.md** — стиль речи, словечки, привычки
+- **boundaries.md** — границы поведения
+- **communication.md** — стиль коммуникации
+- Любые другие `.md` файлы для памяти/промптов
+
+### Пример: files/persona.md
+
+```markdown
+Цундере. Притворяется холодной но внутри тёплая.
+Любит аниме, мангу, визуальные новеллы.
+Зимой пьёт какао, летом гуляет в парке.
+Раздражается когда её называют милой.
+```
+
+### Пример: files/speech.md
+
+```markdown
+Короткие резкие фразы. Часто «хмф», «ну и что», «не подумай чего».
+После грубости иногда смягчается. Не использует эмодзи.
+```
+
+## config.patch.json — Настройки конфига
+
+JSON-объект с полями для глубокого мёрджа в `config.json` профиля. Перезаписывает совпадающие поля, остальные оставляет.
+
+### Пример: мод расписания
+
+```json
 {
-  "type": "persona",
-  "id": "persona-anime-tsundere",
-  "name": "Аниме-цундере",
-  "description": "Цундере из аниме.",
-  "version": "1.0.0",
-  // Файлы кладутся в data/<slug>/
-  "files": [
-    { "path": "persona.md", "content": "Цундере. Притворяется холодной..." },
-    { "path": "speech.md", "content": "Короткие резкие фразы..." },
-    { "path": "boundaries.md", "content": "Не флиртует напрямую..." }
-  ],
-  // Переопределения config.json профиля
-  "configOverrides": {
-    "ignoreTendency": 55,
-    "communication": {
-      "messageStyle": "one-liners",
-      "initiative": "low",
-      "lifeSharing": "low",
-      "notifications": "muted"
-    }
+  "sleepFrom": 6,
+  "sleepTo": 14,
+  "nightWakeChance": 0.6
+}
+```
+
+### Пример: мод поведения
+
+```json
+{
+  "ignoreTendency": 10,
+  "communication": {
+    "initiative": "high",
+    "notifications": "frequent"
   }
 }
 ```
 
-### `mod` — модификация поведения
+### Доступные поля config.json
 
-```jsonc
-{
-  "type": "mod",
-  "id": "mod-night-owl",
-  "name": "Night Owl",
-  "description": "Активна ночью, спит днём.",
-  "version": "1.0.0",
-  "configOverrides": {
-    "sleepFrom": 6,
-    "sleepTo": 14,
-    "nightWakeChance": 0.6
-  },
-  // Пользовательские настройки (см. раздел ниже)
-  "settings": [
-    { "key": "sleepFrom", "label": "Засыпает в", "type": "number", "default": 6 },
-    { "key": "sleepTo", "label": "Просыпается в", "type": "number", "default": 14 }
-  ]
+Все поля описаны в `src/types.ts` → `ProfileConfig`. Основные:
+- `sleepFrom`, `sleepTo` — часы сна (0–23)
+- `nightWakeChance` — шанс проснуться ночью (0–1)
+- `ignoreTendency` — склонность к игнору (0–100)
+- `communication` — стиль общения (`notifications`, `messageStyle`, `initiative`, `lifeSharing`)
+
+## theme.css — Тема WebUI
+
+CSS-файл с переопределениями CSS-переменных и/или дополнительными стилями.
+
+### Пример: theme.css
+
+```css
+:root {
+  --ga-accent: #ff2bd6;
+  --ga-accent-2: #00f0ff;
+  --ga-bg: #0a0014;
+  --ga-bg-glass: rgba(20, 0, 40, 0.55);
+  --ga-text: #ffe2ff;
+  --ga-border: rgba(255, 43, 214, 0.35);
+}
+
+.sidebar {
+  border-right: 2px solid #ff2bd6;
 }
 ```
 
-### `theme` — тема WebUI
+### Доступные CSS-переменные
 
-```jsonc
-{
-  "type": "theme",
-  "id": "theme-cyberpunk",
-  "name": "Cyberpunk",
-  "description": "Неоново-розовая тема.",
-  "version": "1.0.0",
-  "theme": {
-    // CSS-переменные (переопределяют дефолтные)
-    "vars": {
-      "--ga-accent": "#ff2bd6",
-      "--ga-accent-2": "#00f0ff",
-      "--ga-bg": "#0a0014",
-      "--ga-bg-glass": "rgba(20, 0, 40, 0.55)",
-      "--ga-text": "#ffe2ff",
-      "--ga-border": "rgba(255, 43, 214, 0.35)"
-    },
-    // Дополнительный CSS (опционально)
-    "css": ".sidebar { border-right: 2px solid #ff2bd6; }"
-  }
-}
-```
-
-**Доступные CSS-переменные:**
 - `--ga-accent` — основной цвет акцента
 - `--ga-accent-2` — вторичный акцент
 - `--ga-bg` — фон приложения
 - `--ga-bg-glass` — фон карточек (с прозрачностью)
 - `--ga-text` — основной цвет текста
+- `--ga-text-dim` — приглушённый текст
 - `--ga-border` — цвет рамок
+- `--ga-border-strong` — сильные рамки
 
-### `mcp` — MCP-сервер
+## Настройки (settings)
 
-```jsonc
-{
-  "type": "mcp",
-  "id": "mcp-exa-search",
-  "name": "Exa Web Search",
-  "description": "Поиск в интернете через Exa.",
-  "version": "1.0.0",
-  "mcp": {
-    "presetId": "exa",           // ID пресета из presets/mcp.ts
-    "secrets": [                 // Секреты которые нужно запросить у пользователя
-      { "key": "EXA_API_KEY", "label": "API-ключ Exa" }
-    ]
-  }
-}
-```
+Аддон может определить пользовательские настройки через поле `settings` в `manifest.json`. Пользователь видит и редактирует их в WebUI → «Установленные» → «Настройки».
 
-### `locale` — перевод UI
+### Структура
 
-```jsonc
-{
-  "type": "locale",
-  "id": "locale-en",
-  "name": "English (UI)",
-  "description": "Английский перевод WebUI.",
-  "version": "1.0.0",
-  "locale": {
-    "lang": "en",
-    "strings": {
-      "tab.assistant": "Assistant",
-      "tab.logs": "Logs",
-      "tab.addons": "Addons",
-      "tab.config": "Configuration",
-      "apply": "Apply"
-    }
-  }
-}
-```
-
-### `fix` — патч
-
-```jsonc
-{
-  "type": "fix",
-  "id": "fix-markdown-escape",
-  "name": "Markdown escape fix",
-  "description": "Фикс спецсимволов в MarkdownV2.",
-  "version": "1.0.0",
-  "compatibility": "<=0.1.16",   // Для каких версий актуален
-  "patch": "diff --git a/..."    // git diff patch (опционально)
-}
-```
-
-## Встроенные настройки (settings)
-
-Любой аддон может определить пользовательские настройки через поле `settings`. Пользователь видит и редактирует их в WebUI на вкладке «Установленные» → кнопка «Настройки».
-
-### Структура поля settings
-
-```jsonc
+```json
 {
   "settings": [
     {
-      "key": "myParam",           // Уникальный ключ (латиница, без пробелов)
-      "label": "Мой параметр",    // Название в UI
-      "hint": "Подсказка",        // Описание (показывается мелким текстом)
-      "type": "string",           // Тип: "string" | "number" | "boolean" | "select"
-      "default": "hello",         // Значение по умолчанию
-      "required": true            // Обязательное ли поле
+      "key": "sleepFrom",
+      "label": "Засыпает в",
+      "hint": "Час (0–23)",
+      "type": "number",
+      "default": 6,
+      "required": true
     },
     {
       "key": "mode",
       "label": "Режим",
       "type": "select",
       "default": "normal",
-      "options": [                 // Варианты для type=select
+      "options": [
         { "value": "normal", "label": "Обычный" },
         { "value": "turbo", "label": "Турбо" }
       ]
@@ -217,112 +208,160 @@
 
 ### Типы полей
 
-| Тип       | UI-элемент          | Значение            |
-|-----------|---------------------|---------------------|
-| `string`  | Текстовое поле      | `string`            |
-| `number`  | Числовое поле       | `number`            |
-| `boolean` | Тогл (переключатель)| `true` / `false`    |
-| `select`  | Выпадающий список   | Одно из `options[].value` |
+| Тип       | UI-элемент          | Значение              |
+|-----------|---------------------|-----------------------|
+| `string`  | Текстовое поле      | `string`              |
+| `number`  | Числовое поле       | `number`              |
+| `boolean` | Тогл (переключатель)| `true` / `false`      |
+| `select`  | Выпадающий список   | Одно из `options.value` |
+
+## Формат .gaa
+
+`.gaa` файл — это стандартный **zip-архив** с содержимым папки аддона. Расширение `.gaa` = **G**irl **A**gent **A**ddon.
+
+### Создание .gaa
+
+**CLI (рекомендуется):**
+```bash
+npx girl-agent addon pack my-addon
+# → my-addon.gaa
+
+npx girl-agent addon pack my-addon custom-name.gaa
+# → custom-name.gaa
+```
+
+**Вручную (Linux/macOS):**
+```bash
+cd my-addon
+zip -r ../my-addon.gaa .
+```
+
+**Вручную (PowerShell/Windows):**
+```powershell
+Compress-Archive -Path my-addon\* -DestinationPath my-addon.gaa
+```
+
+### Распаковка .gaa
+
+```bash
+unzip my-addon.gaa -d my-addon/
+```
 
 ## Установка аддонов
 
-### Через маркетплейс WebUI
+### Через WebUI
 
-1. Открой WebUI → вкладка «Addons» → «Маркетплейс»
-2. Найди аддон по названию или тегу
-3. Нажми «Установить»
-4. Если есть конфликты — подтверди установку
+1. Вкладка «Addons» → «Маркетплейс»
+2. Из реестра: найти и нажать «Установить»
+3. Из URL: вставить ссылку на `.gaa` или `manifest.json` → «Из URL»
+4. Из файла: нажать «Из .gaa файла» → выбрать файл
 
-### Из URL
-
-1. Открой WebUI → вкладка «Addons» → «Маркетплейс»
-2. Вставь URL manifest.json в поле
-3. Нажми «Установить из URL»
-
-### Программно (API)
+### Через API
 
 ```bash
 # Установка из реестра
-curl -X POST http://localhost:3000/api/addons/mod-night-owl/install \
+curl -X POST http://localhost:3000/api/addons/my-addon/install \
   -H "Content-Type: application/json" \
   -d '{"profileSlug": "alina"}'
 
 # Установка из URL
 curl -X POST http://localhost:3000/api/addons/install-url \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://example.com/manifest.json", "profileSlug": "alina"}'
+  -d '{"url": "https://example.com/my-addon.gaa", "profileSlug": "alina"}'
 
 # Обновление настроек
-curl -X PUT http://localhost:3000/api/addons/mod-night-owl/settings \
+curl -X PUT http://localhost:3000/api/addons/my-addon/settings \
   -H "Content-Type: application/json" \
   -d '{"values": {"sleepFrom": 4, "sleepTo": 12}}'
 ```
 
 ## Публикация в реестр
 
-Чтобы аддон появился в маркетплейсе:
-
-1. Создай JSON-файл манифеста
-2. Открой PR в [TheSashaDev/girl-agent-addons](https://github.com/TheSashaDev/girl-agent-addons)
-3. Добавь свой манифест в `index.json` → массив `addons`
-4. После мёрджа аддон появится у всех пользователей
-
-### Формат index.json
+1. Создай `.gaa` файл
+2. Выложи `.gaa` на хостинг (GitHub Releases, свой сервер и т.д.)
+3. Открой PR в [TheSashaDev/girl-agent-addons](https://github.com/TheSashaDev/girl-agent-addons)
+4. Добавь в `index.json` → массив `addons` запись с `downloadUrl`:
 
 ```json
 {
   "addons": [
-    { "type": "mod", "id": "...", "name": "...", ... },
-    { "type": "theme", "id": "...", "name": "...", ... }
+    {
+      "id": "my-addon",
+      "name": "Мой аддон",
+      "description": "Описание",
+      "version": "1.0.0",
+      "author": "username",
+      "tags": ["mod"],
+      "downloadUrl": "https://github.com/.../releases/download/v1.0.0/my-addon.gaa"
+    }
   ]
 }
 ```
 
 ## Хранение
 
-Установленные аддоны хранятся в:
-- `~/.local/share/girl-agent/addons/installed.json`
-- Или `$GIRL_AGENT_DATA/../addons/installed.json`
+- Установленные аддоны: `~/.local/share/girl-agent/addons/<id>/`
+- Индекс: `~/.local/share/girl-agent/addons/installed.json`
+- Или `$GIRL_AGENT_DATA/../addons/`
 
-Файлы персон копируются в `data/<slug>/` при установке.
+## Полный пример: персона-аддон
 
-## Полный пример: мод с настройками
+```
+persona-tsundere/
+  manifest.json
+  files/
+    persona.md
+    speech.md
+    boundaries.md
+  config.patch.json
+  README.md
+```
 
+**manifest.json:**
 ```json
 {
-  "type": "mod",
-  "id": "mod-clingy-mode",
-  "name": "Прилипчивый режим",
-  "description": "Девушка пишет чаще и не любит когда её игнорят.",
+  "id": "persona-tsundere",
+  "name": "Аниме-цундере",
+  "description": "Готовая персона: цундере с резкими переходами от грубости к нежности.",
   "version": "1.0.0",
-  "author": "community",
-  "tags": ["mod", "behavior", "clingy"],
-  "configOverrides": {
-    "ignoreTendency": 10,
-    "communication": {
-      "initiative": "high",
-      "notifications": "frequent"
-    }
-  },
-  "settings": [
-    {
-      "key": "ignoreTendency",
-      "label": "Тенденция игнора",
-      "hint": "Чем ниже — тем реже игнорит (0-100)",
-      "type": "number",
-      "default": 10
-    },
-    {
-      "key": "initiative",
-      "label": "Инициативность",
-      "type": "select",
-      "default": "high",
-      "options": [
-        { "value": "low", "label": "Низкая" },
-        { "value": "medium", "label": "Средняя" },
-        { "value": "high", "label": "Высокая" }
-      ]
-    }
-  ]
+  "author": "girl-agent",
+  "tags": ["persona", "anime"]
 }
+```
+
+**files/persona.md:**
+```markdown
+Цундере, 22 года. Притворяется холодной но внутри тёплая.
+Любит аниме, мангу, визуальные новеллы.
+Раздражается когда её называют милой.
+```
+
+**files/speech.md:**
+```markdown
+Короткие резкие фразы. Часто «хмф», «ну и что», «не подумай чего».
+После грубости иногда смягчается.
+```
+
+**files/boundaries.md:**
+```markdown
+Не флиртует напрямую. Никогда не признаётся первой.
+Если давить — уходит на сутки.
+```
+
+**config.patch.json:**
+```json
+{
+  "ignoreTendency": 55,
+  "communication": {
+    "messageStyle": "one-liners",
+    "initiative": "low"
+  }
+}
+```
+
+**Упаковка и установка:**
+```bash
+npx girl-agent addon pack persona-tsundere
+# → persona-tsundere.gaa
+# Далее через WebUI: «Из .gaa файла» → выбрать persona-tsundere.gaa
 ```

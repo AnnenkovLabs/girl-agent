@@ -1,33 +1,26 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 /**
- * Аддоны girl-agent. Манифест-формат описан в WebUI-ТЗ §3.3.2.
+ * Аддоны girl-agent (.gaa формат).
  *
- * Виды аддонов:
- *   - fix:    патч исходников / конфига для фикса конкретного бага
- *   - mod:    модификация поведения (hook'и в runtime)
- *   - persona: готовые файлы персоны + config-overrides
- *   - mcp:    MCP-сервер с готовой конфигурацией
- *   - theme:  CSS-тема для WebUI
- *   - locale: переводы UI/промптов
+ * .gaa файл — zip-архив с содержимым папки аддона.
  *
- * Источники:
- *   - официальный реестр (TheSashaDev/girl-agent-addons/index.json)
- *   - сторонние URL (git/npm)
- *   - локальные папки (для разработчиков)
- *
- * Установка:
- *   - persona / theme / locale: распаковка файлов в data/<slug>/ или ~/.local/share/girl-agent/addons/
- *   - mod / mcp: запись в config (mcp[]) + npm install для MCP-сервера
- *   - fix: применение patch'а через git apply (если есть git) или ручное merging
+ * Структура папки аддона:
+ *   manifest.json      — метаданные (обязательно)
+ *   files/             — файлы для копирования в data/<slug>/ (persona.md, speech.md и т.д.)
+ *   config.patch.json  — JSON-объект с полями config'а профиля для мёрджа
+ *   theme.css          — CSS-стили для WebUI (для theme-аддонов)
+ *   install.sh         — скрипт пост-установки (опционально)
+ *   README.md          — документация (опционально)
  */
 
-export type AddonType = "fix" | "mod" | "persona" | "mcp" | "theme" | "locale";
-
 export interface AddonManifest {
-  type: AddonType;
   id: string;
   name: string;
   description: string;
@@ -38,21 +31,9 @@ export interface AddonManifest {
   tags?: string[];
   /** id'ы других аддонов (зависимости) */
   dependencies?: string[];
-  /** какие поля config'а профиля переопределяет (для persona/mod) */
-  configOverrides?: Record<string, unknown>;
-  /** какие файлы memory профиля кладёт (persona) — относительные пути */
-  files?: { path: string; content: string }[];
-  /** для mcp — id пресета MCP + список секретов которые надо запросить */
-  mcp?: { presetId?: string; spawn?: { command: string; args: string[]; env?: Record<string, string> }; secrets?: { key: string; label: string }[] };
-  /** для theme — CSS-переменные / inline css */
-  theme?: { css?: string; vars?: Record<string, string> };
-  /** для locale — карта строк { "key": "перевод" } */
-  locale?: { lang: string; strings: Record<string, string> };
-  /** для fix — текст patch'а */
-  patch?: string;
   /** настройки аддона — пользователь заполняет при установке/позже */
   settings?: AddonSetting[];
-  /** превью / иконка (URL или data:) */
+  /** превью / иконка (URL или относительный путь) */
   icon?: string;
   homepage?: string;
 }
@@ -78,9 +59,11 @@ export interface InstalledAddon {
   manifest: AddonManifest;
   enabled: boolean;
   installedAt: string;
-  source: "registry" | "url" | "local";
+  source: "registry" | "file" | "local";
   /** пользовательские значения настроек */
   settingsValues?: Record<string, string | number | boolean>;
+  /** список файлов из files/ (для удаления при деинсталляции) */
+  installedFiles?: string[];
 }
 
 export const REGISTRY_URL = process.env.GIRL_AGENT_ADDON_REGISTRY
@@ -106,6 +89,8 @@ async function readJsonOrEmpty<T>(p: string, fallback: T): Promise<T> {
   } catch { return fallback; }
 }
 
+// ==================== installed.json ====================
+
 export async function listInstalled(): Promise<InstalledAddon[]> {
   const dir = await ensureDir();
   const indexPath = path.join(dir, "installed.json");
@@ -117,33 +102,229 @@ async function writeInstalled(list: InstalledAddon[]): Promise<void> {
   await fs.writeFile(path.join(dir, "installed.json"), JSON.stringify(list, null, 2), "utf8");
 }
 
+// ==================== registry ====================
+
 export async function fetchRegistry(): Promise<AddonManifest[]> {
   try {
     const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) return BUILTIN_ADDONS;
+    if (!res.ok) return [];
     const data = await res.json() as { addons?: AddonManifest[] };
-    if (!data || !Array.isArray(data.addons)) return BUILTIN_ADDONS;
-    return [...BUILTIN_ADDONS, ...data.addons];
+    if (!data || !Array.isArray(data.addons)) return [];
+    return data.addons;
   } catch {
-    return BUILTIN_ADDONS;
+    return [];
   }
 }
 
-export async function installFromManifest(manifest: AddonManifest, source: "registry" | "url" | "local" = "registry"): Promise<InstalledAddon> {
+// ==================== .gaa pack / unpack ====================
+
+/**
+ * Распаковать .gaa (zip) файл во временную директорию.
+ * Возвращает путь к распакованной папке.
+ */
+export async function unpackGaa(gaaPath: string): Promise<string> {
+  const tmpDir = path.join(os.tmpdir(), `gaa-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  await fs.mkdir(tmpDir, { recursive: true });
+  await execFileAsync("unzip", ["-o", "-q", gaaPath, "-d", tmpDir]);
+  // Проверяем — если архив содержит одну подпапку, заходим внутрь
+  const entries = await fs.readdir(tmpDir);
+  if (entries.length === 1) {
+    const sub = path.join(tmpDir, entries[0]!);
+    const st = await fs.stat(sub);
+    if (st.isDirectory()) {
+      const innerManifest = path.join(sub, "manifest.json");
+      try {
+        await fs.access(innerManifest);
+        return sub;
+      } catch { /* manifest в корне */ }
+    }
+  }
+  return tmpDir;
+}
+
+/**
+ * Запаковать папку аддона в .gaa файл.
+ * Возвращает путь к созданному .gaa файлу.
+ */
+export async function packGaa(addonDir: string, outputPath?: string): Promise<string> {
+  const manifestPath = path.join(addonDir, "manifest.json");
+  const manifestRaw = await fs.readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(manifestRaw) as AddonManifest;
   validateManifest(manifest);
+
+  const out = outputPath ?? path.join(process.cwd(), `${manifest.id}.gaa`);
+
+  // Удаляем старый если есть
+  try { await fs.unlink(out); } catch { /* ok */ }
+
+  const dirName = path.basename(addonDir);
+  const parentDir = path.dirname(addonDir);
+  await execFileAsync("zip", ["-r", "-q", out, dirName], { cwd: parentDir });
+
+  return out;
+}
+
+// ==================== install / uninstall ====================
+
+import { readConfig, writeConfig, writeMd } from "../storage/md.js";
+
+/**
+ * Установка аддона из распакованной папки.
+ * Применяет файлы, config.patch.json, тему.
+ */
+export async function installFromDir(
+  addonDir: string,
+  profileSlug?: string,
+  source: "registry" | "file" | "local" = "local"
+): Promise<{ addon: InstalledAddon; applied: string[] }> {
+  const manifestPath = path.join(addonDir, "manifest.json");
+  const manifestRaw = await fs.readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(manifestRaw) as AddonManifest;
+  validateManifest(manifest);
+
+  const applied: string[] = [];
+  const installedFiles: string[] = [];
+
+  // 1. Копируем файлы из files/ в профиль
+  const filesDir = path.join(addonDir, "files");
+  try {
+    const fileStat = await fs.stat(filesDir);
+    if (fileStat.isDirectory() && profileSlug) {
+      const fileEntries = await walkDir(filesDir);
+      for (const relPath of fileEntries) {
+        const content = await fs.readFile(path.join(filesDir, relPath), "utf8");
+        await writeMd(profileSlug, relPath, content);
+        installedFiles.push(relPath);
+      }
+      if (fileEntries.length) applied.push(`${fileEntries.length} файл(ов) скопировано`);
+    }
+  } catch { /* нет директории files/ — ок */ }
+
+  // 2. Применяем config.patch.json
+  const patchPath = path.join(addonDir, "config.patch.json");
+  try {
+    const patchRaw = await fs.readFile(patchPath, "utf8");
+    const patch = JSON.parse(patchRaw) as Record<string, unknown>;
+    if (profileSlug) {
+      const cfg = await readConfig(profileSlug);
+      if (cfg) {
+        deepMerge(cfg as unknown as Record<string, unknown>, patch);
+        await writeConfig(cfg);
+        applied.push(`config (${Object.keys(patch).length} полей)`);
+      }
+    }
+  } catch { /* нет config.patch.json — ок */ }
+
+  // 3. Сохраняем тему (theme.css)
+  const themePath = path.join(addonDir, "theme.css");
+  try {
+    const css = await fs.readFile(themePath, "utf8");
+    const dir = await ensureDir();
+    await fs.writeFile(path.join(dir, `theme-${manifest.id}.css`), css, "utf8");
+    applied.push("тема установлена");
+  } catch { /* нет theme.css — ок */ }
+
+  // 4. Сохраняем .gaa копию в addons/
+  const dir = await ensureDir();
+  const addonStorePath = path.join(dir, manifest.id);
+  await fs.mkdir(addonStorePath, { recursive: true });
+  // Копируем manifest
+  await fs.copyFile(manifestPath, path.join(addonStorePath, "manifest.json"));
+  // Копируем весь контент
+  const allFiles = await walkDir(addonDir);
+  for (const f of allFiles) {
+    if (f === "manifest.json") continue;
+    const src = path.join(addonDir, f);
+    const dst = path.join(addonStorePath, f);
+    await fs.mkdir(path.dirname(dst), { recursive: true });
+    await fs.copyFile(src, dst);
+  }
+
+  // 5. Записываем в installed.json
   const list = await listInstalled();
+  const item: InstalledAddon = {
+    manifest,
+    enabled: true,
+    installedAt: new Date().toISOString(),
+    source,
+    installedFiles: installedFiles.length ? installedFiles : undefined
+  };
   const existingIdx = list.findIndex(a => a.manifest.id === manifest.id);
-  const item: InstalledAddon = { manifest, enabled: true, installedAt: new Date().toISOString(), source };
   if (existingIdx >= 0) list[existingIdx] = item;
   else list.push(item);
   await writeInstalled(list);
-  return item;
+
+  return { addon: item, applied };
+}
+
+/**
+ * Установка .gaa файла.
+ */
+export async function installFromGaa(
+  gaaPath: string,
+  profileSlug?: string
+): Promise<{ addon: InstalledAddon; applied: string[] }> {
+  const dir = await unpackGaa(gaaPath);
+  try {
+    return await installFromDir(dir, profileSlug, "file");
+  } finally {
+    // Чистим tmp
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Установка аддона из реестра (скачиваем .gaa по URL из реестра).
+ */
+export async function installFromRegistry(
+  id: string,
+  registryManifest: AddonManifest & { downloadUrl?: string },
+  profileSlug?: string
+): Promise<{ addon: InstalledAddon; applied: string[] }> {
+  const url = registryManifest.downloadUrl;
+  if (!url) {
+    // Если нет downloadUrl — это legacy манифест, ставим как JSON-based
+    const list = await listInstalled();
+    const item: InstalledAddon = {
+      manifest: registryManifest,
+      enabled: true,
+      installedAt: new Date().toISOString(),
+      source: "registry"
+    };
+    const existingIdx = list.findIndex(a => a.manifest.id === id);
+    if (existingIdx >= 0) list[existingIdx] = item;
+    else list.push(item);
+    await writeInstalled(list);
+    return { addon: item, applied: [] };
+  }
+
+  // Скачиваем .gaa
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`Не удалось скачать аддон: HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const tmpGaa = path.join(os.tmpdir(), `${id}-${Date.now()}.gaa`);
+  await fs.writeFile(tmpGaa, buf);
+  try {
+    return await installFromGaa(tmpGaa, profileSlug);
+  } finally {
+    await fs.unlink(tmpGaa).catch(() => {});
+  }
 }
 
 export async function uninstall(id: string): Promise<boolean> {
   const list = await listInstalled();
   const next = list.filter(a => a.manifest.id !== id);
   if (next.length === list.length) return false;
+
+  // Удаляем хранилище аддона
+  const dir = addonsDir();
+  const addonStore = path.join(dir, id);
+  await fs.rm(addonStore, { recursive: true, force: true }).catch(() => {});
+
+  // Удаляем тему если была
+  const themePath = path.join(dir, `theme-${id}.css`);
+  await fs.unlink(themePath).catch(() => {});
+
   await writeInstalled(next);
   return true;
 }
@@ -166,6 +347,8 @@ export async function updateSettings(id: string, values: Record<string, string |
   return item;
 }
 
+// ==================== validate ====================
+
 export function validateManifest(m: unknown): asserts m is AddonManifest {
   if (!m || typeof m !== "object") throw new Error("manifest must be object");
   const x = m as Record<string, unknown>;
@@ -173,144 +356,60 @@ export function validateManifest(m: unknown): asserts m is AddonManifest {
   if (typeof x.name !== "string" || !x.name) throw new Error("manifest.name required");
   if (typeof x.description !== "string") throw new Error("manifest.description required");
   if (typeof x.version !== "string") throw new Error("manifest.version required");
-  if (!["fix", "mod", "persona", "mcp", "theme", "locale"].includes(String(x.type))) {
-    throw new Error("manifest.type invalid");
+}
+
+// ==================== helpers ====================
+
+/** Рекурсивно обходит директорию, возвращает относительные пути файлов. */
+async function walkDir(dir: string, prefix = ""): Promise<string[]> {
+  const result: string[] = [];
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.isDirectory()) {
+      result.push(...await walkDir(path.join(dir, e.name), rel));
+    } else {
+      result.push(rel);
+    }
+  }
+  return result;
+}
+
+/** Глубокий мёрдж объектов (source перезаписывает target). */
+function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    const tv = target[key];
+    if (sv && typeof sv === "object" && !Array.isArray(sv) && tv && typeof tv === "object" && !Array.isArray(tv)) {
+      deepMerge(tv as Record<string, unknown>, sv as Record<string, unknown>);
+    } else {
+      target[key] = sv;
+    }
   }
 }
 
 /**
- * Встроенные аддоны — доступны без подключения к сети.
- * Это демо-каталог чтобы UI маркетплейса всегда был непустым в офлайне.
+ * Получить содержимое README.md аддона (если есть).
  */
-export const BUILTIN_ADDONS: AddonManifest[] = [
-  {
-    type: "persona",
-    id: "persona-anime-tsundere",
-    name: "Аниме-цундере",
-    description: "Готовая персона: цундере с резкими переходами от грубости к нежности. Любит мангу, играет в визуальные новеллы.",
-    version: "1.0.0",
-    author: "girl-agent",
-    tags: ["persona", "anime", "tsundere"],
-    configOverrides: { ignoreTendency: 55, communication: { messageStyle: "one-liners", initiative: "low", lifeSharing: "low", notifications: "muted" } },
-    files: [
-      { path: "persona.md", content: "Цундере. Притворяется холодной но внутри тёплая. Любит аниме, мангу, визуальные новеллы. Зимой пьёт какао, летом гуляет в парке. Раздражается когда её называют милой." },
-      { path: "speech.md", content: "Короткие резкие фразы. Часто 'хмф', 'ну и что', 'не подумай чего'. После грубости иногда смягчается." },
-      { path: "boundaries.md", content: "Не флиртует напрямую. Никогда не признаётся первой. Если давить — уходит на сутки." }
-    ]
-  },
-  {
-    type: "persona",
-    id: "persona-goth-girl",
-    name: "Готка",
-    description: "Тёмная эстетика, любит индастриал, чёрный юмор, читает Камю и Чорана.",
-    version: "1.0.0",
-    author: "girl-agent",
-    tags: ["persona", "goth", "dark"],
-    configOverrides: { ignoreTendency: 40, communication: { messageStyle: "balanced", initiative: "medium", lifeSharing: "medium", notifications: "normal" } },
-    files: [
-      { path: "persona.md", content: "Готка, 22, изучает философию. Любит The Cure, Type O Negative, Sisters of Mercy. Курит. Пьёт чёрный кофе и красное вино." },
-      { path: "speech.md", content: "Спокойная сухая ирония, без капса и эмодзи. Любит чёрный юмор. Не пишет 'хи-хи' и не использует милых сокращений." }
-    ]
-  },
-  {
-    type: "mod",
-    id: "mod-night-owl",
-    name: "Night Owl",
-    description: "Активна ночью (23:00–05:00), спит днём. Удобно для тех, кто сам ложится поздно.",
-    version: "1.0.0",
-    author: "girl-agent",
-    tags: ["mod", "schedule"],
-    configOverrides: { sleepFrom: 6, sleepTo: 14, nightWakeChance: 0.6 },
-    settings: [
-      { key: "sleepFrom", label: "Засыпает в", type: "number", default: 6, hint: "Час (0–23)" },
-      { key: "sleepTo", label: "Просыпается в", type: "number", default: 14, hint: "Час (0–23)" },
-      { key: "nightWakeChance", label: "Шанс проснуться ночью", type: "select", default: "0.6", options: [
-        { value: "0.2", label: "Низкий (20%)" },
-        { value: "0.4", label: "Средний (40%)" },
-        { value: "0.6", label: "Высокий (60%)" },
-        { value: "0.8", label: "Очень высокий (80%)" }
-      ] }
-    ]
-  },
-  {
-    type: "theme",
-    id: "theme-cyberpunk",
-    name: "Cyberpunk",
-    description: "Неоново-розовая тема для WebUI с акцентами cyan + magenta.",
-    version: "1.0.0",
-    author: "girl-agent",
-    tags: ["theme"],
-    theme: {
-      vars: {
-        "--ga-accent": "#ff2bd6",
-        "--ga-accent-2": "#00f0ff",
-        "--ga-bg": "#0a0014",
-        "--ga-bg-glass": "rgba(20, 0, 40, 0.55)",
-        "--ga-text": "#ffe2ff",
-        "--ga-border": "rgba(255, 43, 214, 0.35)"
-      }
-    }
-  },
-  {
-    type: "theme",
-    id: "theme-pastel",
-    name: "Pastel",
-    description: "Мягкая пастельная тема для светлого режима.",
-    version: "1.0.0",
-    author: "girl-agent",
-    tags: ["theme", "light"],
-    theme: {
-      vars: {
-        "--ga-accent": "#f5a3c7",
-        "--ga-accent-2": "#a3d8f5",
-        "--ga-bg": "#fdfaf8",
-        "--ga-bg-glass": "rgba(255, 245, 250, 0.78)",
-        "--ga-text": "#3a2a3f",
-        "--ga-border": "rgba(245, 163, 199, 0.45)"
-      }
-    }
-  },
-  {
-    type: "locale",
-    id: "locale-en",
-    name: "English (UI)",
-    description: "Английский перевод интерфейса WebUI (промпты остаются русскими).",
-    version: "0.1.0",
-    author: "girl-agent",
-    tags: ["locale"],
-    locale: {
-      lang: "en",
-      strings: {
-        "tab.assistant": "Assistant",
-        "tab.logs": "Logs",
-        "tab.addons": "Addons",
-        "tab.config": "Configuration",
-        "tab.memory": "Memory",
-        "apply": "Apply"
-      }
-    }
-  },
-  {
-    type: "fix",
-    id: "fix-markdown-escape",
-    name: "Markdown escape fix",
-    description: "Дополнительный patch для экранирования спецсимволов в MarkdownV2 (если ваш билд старый).",
-    version: "1.0.0",
-    author: "girl-agent",
-    tags: ["bugfix", "telegram", "markdown"],
-    compatibility: "<=0.1.16"
-  },
-  {
-    type: "mcp",
-    id: "mcp-exa-search",
-    name: "Exa Web Search",
-    description: "Девушка может погуглить мем, трек, тренд через Exa.",
-    version: "1.0.0",
-    author: "girl-agent",
-    tags: ["mcp", "search"],
-    mcp: {
-      presetId: "exa",
-      secrets: [{ key: "EXA_API_KEY", label: "Exa API key" }]
-    }
+export async function getAddonReadme(id: string): Promise<string | null> {
+  const dir = addonsDir();
+  const readmePath = path.join(dir, id, "README.md");
+  try {
+    return await fs.readFile(readmePath, "utf8");
+  } catch {
+    return null;
   }
-];
+}
+
+/**
+ * Получить список файлов аддона.
+ */
+export async function getAddonFiles(id: string): Promise<string[]> {
+  const dir = addonsDir();
+  const addonDir = path.join(dir, id);
+  try {
+    return await walkDir(addonDir);
+  } catch {
+    return [];
+  }
+}

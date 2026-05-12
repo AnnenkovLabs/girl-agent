@@ -1,6 +1,12 @@
 import { Router, HttpError } from "../http.js";
-import { fetchRegistry, listInstalled, installFromManifest, uninstall, toggle, updateSettings, BUILTIN_ADDONS, validateManifest, type AddonManifest } from "../addons.js";
-import { readConfig, writeConfig, writeMd } from "../../storage/md.js";
+import {
+  fetchRegistry, listInstalled, installFromGaa, installFromRegistry, installFromDir,
+  uninstall, toggle, updateSettings, validateManifest, getAddonReadme, getAddonFiles,
+  type AddonManifest
+} from "../addons.js";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
 export function registerAddonRoutes(r: Router): void {
   r.get("/api/addons", async () => {
@@ -8,8 +14,7 @@ export function registerAddonRoutes(r: Router): void {
     const installedIds = new Set(installed.map(a => a.manifest.id));
     return {
       available: available.map(m => ({ ...m, installed: installedIds.has(m.id) })),
-      installed,
-      builtin: BUILTIN_ADDONS.map(a => a.id)
+      installed
     };
   });
 
@@ -17,100 +22,66 @@ export function registerAddonRoutes(r: Router): void {
     return { installed: await listInstalled() };
   });
 
+  // Установка из реестра
   r.post("/api/addons/:id/install", async ({ params, body }) => {
     const id = params.id ?? "";
-    const data = body as { manifest?: AddonManifest; profileSlug?: string } | undefined;
-    let manifest = data?.manifest;
-    if (!manifest) {
-      const list = await fetchRegistry();
-      manifest = list.find(a => a.id === id);
-      if (!manifest) throw new HttpError(404, "addon not found in registry");
-    }
-    validateManifest(manifest);
-    if (manifest.id !== id) throw new HttpError(400, "id mismatch");
+    const data = body as { profileSlug?: string } | undefined;
 
-    // Apply addon to profile if applicable
-    const applied: string[] = [];
-    if (data?.profileSlug && (manifest.type === "persona" || manifest.type === "mod" || manifest.type === "mcp")) {
-      const cfg = await readConfig(data.profileSlug);
-      if (!cfg) throw new HttpError(404, "profile not found");
-      if (manifest.configOverrides) {
-        Object.assign(cfg, manifest.configOverrides);
-        applied.push(`config (${Object.keys(manifest.configOverrides).length} field(s))`);
-      }
-      if (manifest.type === "mcp" && manifest.mcp?.presetId) {
-        const cur = cfg.mcp ?? [];
-        if (!cur.find(m => m.id === manifest.mcp?.presetId)) {
-          const secrets: Record<string, string> = {};
-          for (const s of manifest.mcp.secrets ?? []) secrets[s.key] = "";
-          cur.push({ id: manifest.mcp.presetId, secrets });
-          cfg.mcp = cur;
-          applied.push(`mcp ${manifest.mcp.presetId}`);
-        }
-      }
-      if (manifest.type === "persona" && manifest.files) {
-        for (const f of manifest.files) {
-          if (!f.path || /\.\./.test(f.path) || f.path.startsWith("/")) continue;
-          await writeMd(data.profileSlug, f.path, f.content ?? "");
-        }
-        if (manifest.files.length) applied.push(`${manifest.files.length} file(s)`);
-      }
-      await writeConfig(cfg);
-    }
+    const registry = await fetchRegistry();
+    const manifest = registry.find(a => a.id === id);
+    if (!manifest) throw new HttpError(404, "addon not found in registry");
 
-    const installed = await installFromManifest(manifest, "registry");
-    return { ok: true, installed, applied };
+    const result = await installFromRegistry(id, manifest, data?.profileSlug);
+    return { ok: true, installed: result.addon, applied: result.applied };
   });
 
+  // Установка из .gaa файла (upload)
+  r.post("/api/addons/install-file", async ({ body }) => {
+    const data = body as { gaaBase64?: string; profileSlug?: string } | undefined;
+    if (!data?.gaaBase64) throw new HttpError(400, "gaaBase64 required");
+
+    // Сохраняем во временный файл
+    const buf = Buffer.from(data.gaaBase64, "base64");
+    const tmpPath = path.join(os.tmpdir(), `upload-${Date.now()}.gaa`);
+    await fs.writeFile(tmpPath, buf);
+
+    try {
+      const result = await installFromGaa(tmpPath, data.profileSlug);
+      return { ok: true, installed: result.addon, applied: result.applied };
+    } finally {
+      await fs.unlink(tmpPath).catch(() => {});
+    }
+  });
+
+  // Установка из URL (.gaa или manifest.json)
   r.post("/api/addons/install-url", async ({ body }) => {
     const data = body as { url?: string; profileSlug?: string } | undefined;
     if (!data?.url) throw new HttpError(400, "url required");
-    let manifest: AddonManifest;
-    try {
-      const res = await fetch(data.url, { signal: AbortSignal.timeout(15_000) });
+
+    const url = data.url.trim();
+
+    if (url.endsWith(".gaa")) {
+      // Скачиваем .gaa
+      const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new HttpError(502, `fetch failed: HTTP ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const tmpPath = path.join(os.tmpdir(), `url-${Date.now()}.gaa`);
+      await fs.writeFile(tmpPath, buf);
+      try {
+        const result = await installFromGaa(tmpPath, data.profileSlug);
+        return { ok: true, installed: result.addon, applied: result.applied };
+      } finally {
+        await fs.unlink(tmpPath).catch(() => {});
+      }
+    } else {
+      // Legacy: скачиваем manifest.json
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
       if (!res.ok) throw new HttpError(502, `fetch failed: HTTP ${res.status}`);
       const json = await res.json() as AddonManifest;
       validateManifest(json);
-      manifest = json;
-    } catch (e) {
-      throw new HttpError(400, `invalid manifest: ${(e as Error).message}`);
+      const result = await installFromRegistry(json.id, json, data.profileSlug);
+      return { ok: true, installed: result.addon, applied: result.applied };
     }
-
-    if (data.profileSlug && (manifest.type === "persona" || manifest.type === "mod" || manifest.type === "mcp")) {
-      const cfg = await readConfig(data.profileSlug);
-      if (!cfg) throw new HttpError(404, "profile not found");
-      if (manifest.configOverrides) Object.assign(cfg, manifest.configOverrides);
-      if (manifest.type === "persona" && manifest.files) {
-        for (const f of manifest.files) {
-          if (!f.path || /\.\./.test(f.path) || f.path.startsWith("/")) continue;
-          await writeMd(data.profileSlug, f.path, f.content ?? "");
-        }
-      }
-      await writeConfig(cfg);
-    }
-    const installed = await installFromManifest(manifest, "url");
-    return { ok: true, installed };
-  });
-
-  r.post("/api/addons/preview", async ({ body }) => {
-    const data = body as { manifest?: AddonManifest; profileSlug?: string } | undefined;
-    if (!data?.manifest) throw new HttpError(400, "manifest required");
-    try { validateManifest(data.manifest); } catch (e) { throw new HttpError(400, `invalid: ${(e as Error).message}`); }
-    const conflicts: string[] = [];
-    const installed = await listInstalled();
-    if (installed.find(a => a.manifest.id === data.manifest!.id)) conflicts.push(`addon ${data.manifest.id} уже установлен`);
-    if (data.profileSlug) {
-      const cfg = await readConfig(data.profileSlug);
-      if (cfg && data.manifest.configOverrides) {
-        for (const k of Object.keys(data.manifest.configOverrides)) {
-          if ((cfg as unknown as Record<string, unknown>)[k] !== undefined) conflicts.push(`перепишет config.${k}`);
-        }
-      }
-      if (cfg && data.manifest.type === "persona" && data.manifest.files) {
-        for (const f of data.manifest.files) conflicts.push(`перепишет ${f.path}`);
-      }
-    }
-    return { ok: true, conflicts };
   });
 
   r.delete("/api/addons/:id", async ({ params }) => {
@@ -132,5 +103,15 @@ export function registerAddonRoutes(r: Router): void {
     const result = await updateSettings(params.id ?? "", data.values);
     if (!result) throw new HttpError(404, "addon not installed");
     return { ok: true, addon: result };
+  });
+
+  r.get("/api/addons/:id/readme", async ({ params }) => {
+    const readme = await getAddonReadme(params.id ?? "");
+    return { readme: readme ?? "" };
+  });
+
+  r.get("/api/addons/:id/files", async ({ params }) => {
+    const files = await getAddonFiles(params.id ?? "");
+    return { files };
   });
 }

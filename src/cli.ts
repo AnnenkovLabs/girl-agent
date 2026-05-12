@@ -44,6 +44,8 @@ headless (для desktop-rs обвязки):
   --set-model --profile=<slug> --api-preset=<id> --model=<m> [--api-key=<k>]
   --delete-profile --profile=<slug> --yes
   update [--verbose]           применить data-миграции
+  addon pack <folder> [output] собрать папку аддона в .gaa файл
+  addon init <folder>          создать шаблон аддона
   --help
 `;
 
@@ -74,6 +76,11 @@ async function main(): Promise<void> {
 
   if (subcommand === "update") {
     await runUpdate(!!argv.verbose);
+    return;
+  }
+
+  if (subcommand === "addon") {
+    await runAddonCommand(positional.slice(1));
     return;
   }
 
@@ -279,6 +286,62 @@ function slugifyLocal(name: string): string {
     .replace(/[^a-zа-я0-9]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || `profile-${Date.now().toString(36)}`;
+}
+
+async function runAddonCommand(args: string[]): Promise<void> {
+  const sub = args[0];
+
+  if (sub === "pack") {
+    const folder = args[1];
+    if (!folder) {
+      process.stderr.write("Использование: npx girl-agent addon pack <folder> [output.gaa]\n");
+      process.exit(1);
+    }
+    const { packGaa } = await import("./webui/addons.js");
+    const output = args[2] ?? undefined;
+    const result = await packGaa(folder, output);
+    process.stdout.write(`Создан: ${result}\n`);
+    return;
+  }
+
+  if (sub === "init") {
+    const folder = args[1];
+    if (!folder) {
+      process.stderr.write("Использование: npx girl-agent addon init <folder>\n");
+      process.exit(1);
+    }
+    const { promises: initFs } = await import("node:fs");
+    const initPath = await import("node:path");
+    const dir = initPath.default.resolve(folder);
+    await initFs.mkdir(initPath.default.join(dir, "files"), { recursive: true });
+    const name = initPath.default.basename(dir);
+    const manifest = {
+      id: name,
+      name,
+      description: "Описание аддона",
+      version: "1.0.0",
+      author: "",
+      tags: [],
+      settings: []
+    };
+    await initFs.writeFile(initPath.default.join(dir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+    await initFs.writeFile(initPath.default.join(dir, "README.md"), `# ${name}\n\nОписание аддона.\n`, "utf8");
+    await initFs.writeFile(
+      initPath.default.join(dir, "config.patch.json"),
+      JSON.stringify({ "_comment": "Поля для мёрджа в config.json профиля" }, null, 2),
+      "utf8"
+    );
+    process.stdout.write(`Шаблон аддона создан: ${dir}\n`);
+    process.stdout.write(`  manifest.json  — метаданные\n`);
+    process.stdout.write(`  files/         — файлы для копирования в профиль\n`);
+    process.stdout.write(`  config.patch.json — config overrides\n`);
+    process.stdout.write(`  README.md      — документация\n\n`);
+    process.stdout.write(`Упаковать: npx girl-agent addon pack ${folder}\n`);
+    return;
+  }
+
+  process.stderr.write("Команды:\n  addon pack <folder> [output.gaa]  — собрать .gaa\n  addon init <folder>              — создать шаблон\n");
+  process.exit(1);
 }
 
 function personaNotesForGeneration(cfg: ProfileConfig): string {
