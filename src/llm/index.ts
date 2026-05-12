@@ -16,6 +16,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages";
 import type { ProfileConfig } from "../types.js";
 import { refreshAccessToken, isTokenExpired } from "../oauth/girlai.js";
+import { normalizeModelName } from "../engine/security.js";
 
 interface OpenAIStreamChoice {
   delta?: { content?: unknown };
@@ -117,13 +118,14 @@ class OpenAILike implements LLMClient {
 
   async chat(messages: ChatMessage[], opts: LLMOptions = {}): Promise<string> {
     await this.ensureFreshToken();
+    const model = normalizeModelName(this.cfg.model);
     const params: ChatCompletionCreateParamsNonStreaming = {
-      model: this.cfg.model,
+      model,
       messages: openAIMessages(messages),
       temperature: opts.temperature ?? 0.85,
       response_format: openAIResponseFormat(opts)
     };
-    if (usesMaxCompletionTokens(this.cfg.model)) {
+    if (usesMaxCompletionTokens(model)) {
       params.max_completion_tokens = opts.maxTokens ?? 600;
     } else {
       params.max_tokens = opts.maxTokens ?? 600;
@@ -261,7 +263,7 @@ class AnthropicLike implements LLMClient {
     }
 
     const params: MessageCreateParamsNonStreaming = {
-      model: this.cfg.model,
+      model: normalizeModelName(this.cfg.model),
       system: system || undefined,
       max_tokens: opts.maxTokens ?? 600,
       temperature: opts.temperature ?? 0.85,

@@ -29,6 +29,10 @@ export interface LLMPreset {
   recommended?: boolean;
   /** Preset supports OAuth login as alternative to API key */
   oauth?: boolean;
+  /** Provider временно недоступен — отображаем в списке как readonly. */
+  disabled?: boolean;
+  /** Причина дизейбла (показывается в UI). */
+  disabledReason?: string;
 }
 
 export interface MCPPreset {
@@ -163,4 +167,28 @@ export interface BehaviorTickResult {
   intent: "reply" | "ignore" | "short" | "left-on-read" | "leave-chat" | "reaction-only";
   /** Опциональная TG-реакция на его сообщение. Девушки 2026 чаще реагируют чем шлют эмодзи в тексте. Один символ. */
   reaction?: string;
+  /**
+   * ID сообщения в Telegram, на которое ставим реакцию.
+   * Девушки в TG иногда реагируют на более раннее сообщение, которое их зацепило.
+   */
+  reactionTargetMessageId?: number;
+  /**
+   * Если выставлено — после отправки сообщения девушка решила его отредактировать.
+   * (редко и в основном при опечатках / выпавшем т 9 / изменении решения)
+   */
+  selfEdit?: {
+    /** Номер сообщения из буля отправленных (0 = последнее, 1 = предпоследнее...). */
+    targetOffset: number;
+    newText: string;
+    reason?: string;
+  };
+}
+
+export type DeletionAwareness = "saw-and-read" | "saw-not-read" | "missed";
+
+export interface DeletedMessageContext {
+  deletedText: string;
+  awareness: DeletionAwareness;
+  /** Как давно (в секундах) было удалено. */
+  ageSec: number;
 }

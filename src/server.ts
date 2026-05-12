@@ -18,7 +18,7 @@ import { applyLLMUpdate, describeLLM } from "./config/llm-update.js";
 /**
  * Server / automation entrypoint.
  *
- * The interactive setup is the regular ink wizard (TTY required).
+ * The interactive setup happens in the WebUI (default `npx girl-agent`).
  * This module is for non-TTY automation only:
  *   --config <file>        load profile from json, run/save it
  *   --print-config         print json template
@@ -72,8 +72,8 @@ env-vars (для CI / docker secrets / k8s):
   GIRL_AGENT_API_KEY        ключ от провайдера
   GIRL_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET, _IGNORE_TENDENCY, _OWNER_ID
 
-для интерактивной первичной настройки запускай без флагов в обычном терминале —
-откроется ink-визард.
+для интерактивной первичной настройки запускай без флагов —
+откроется WebUI на http://localhost:3000.
 `;
 
 function parseServerArgs(argv: Record<string, unknown>): ServerArgs {

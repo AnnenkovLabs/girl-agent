@@ -1,12 +1,12 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/cli.tsx"],
+  entry: ["src/cli.ts"],
   format: ["esm"],
   target: "node20",
   platform: "node",
   outDir: "dist",
-  clean: true,
+  clean: ["dist/cli.js"],
   shims: true,
   splitting: false,
   sourcemap: false,
@@ -17,8 +17,7 @@ export default defineConfig({
     "@anthropic-ai/sdk",
     "openai",
     "grammy",
-    "ink",
-    "react",
-    "@modelcontextprotocol/sdk"
+    "@modelcontextprotocol/sdk",
+    "ws"
   ]
 });

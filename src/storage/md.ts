@@ -21,6 +21,18 @@ export const DATA_ROOT = process.env.GIRL_AGENT_DATA
 function defaultDataRoot(): string {
   const cwd = process.cwd();
   if (looksLikeProjectRoot(cwd)) return path.resolve(cwd, "data");
+  // Issue #72: на Windows храним в %APPDATA%\\girl-agent\\data — это ожидаемое
+  // место для конфига npm-приложений, при отсутствии XDG.
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA
+      ? path.resolve(process.env.APPDATA)
+      : path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(appdata, "girl-agent", "data");
+  }
+  // macOS: ~/Library/Application Support/girl-agent/data (если не задан XDG)
+  if (process.platform === "darwin" && !process.env.XDG_DATA_HOME) {
+    return path.join(os.homedir(), "Library", "Application Support", "girl-agent", "data");
+  }
   const xdg = process.env.XDG_DATA_HOME
     ? path.resolve(process.env.XDG_DATA_HOME)
     : path.join(os.homedir(), ".local", "share");
@@ -183,10 +195,13 @@ export async function writeRelationship(slug: string, state: RelationshipState):
   await writeMd(slug, "relationship.md", body);
 }
 
-/** Старая версия — оставлена для совместимости. Использует UTC. Предпочитай appendSessionLog. */
-export async function appendDayLog(slug: string, line: string): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
-  await appendMd(slug, `log/${today}.md`, line + "\n");
+/**
+ * Депрекейтед: раньше эта функция использовала UTC, из-за чего время в логах отличалось
+ * от daily-life/agenda/memory (Issue #78). Теперь она просто прокси на appendSessionLog
+ * с дефолтной tz Europe/Moscow (совместимость для старых call-sites без tz).
+ */
+export async function appendDayLog(slug: string, line: string, tz = "Europe/Moscow"): Promise<void> {
+  await appendSessionLog(slug, tz, line);
 }
 
 /**

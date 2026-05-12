@@ -8,9 +8,11 @@ export const LLM_PRESETS: LLMPreset[] = [
     baseURL: "https://api.girl-agent.com/v1",
     defaultModel: "GirlAI-test",
     models: ["GirlAI-test"],
-    recommended: true,
+    recommended: false,
     oauth: true,
-    hint: "рекомендуемый · OpenAI-compatible gateway (РФ, оплата)"
+    disabled: true,
+    disabledReason: "временно недоступен",
+    hint: "временно недоступен · OpenAI-compatible gateway"
   },
   {
     id: "claudehub",

@@ -3,6 +3,7 @@ import { StringSession } from "telegram/sessions/index.js";
 import type { ProfileConfig } from "../types.js";
 import type { IncomingMedia, TgAdapter } from "./index.js";
 import { NewMessage } from "telegram/events/index.js";
+import { Raw } from "telegram/events/Raw.js";
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -95,6 +96,16 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
         }
       }
       debug("[userbot] registering message handler…");
+      // Кэш последних входящих сообщений по (chatId, messageId) — нужен для Task #15:
+      // когда юзер удаляет сообщение, в raw update приходят только id, текст нужно
+      // восстановить из хранимых буфера.
+      const incomingCache = new Map<string, { text: string; ts: number; chatId: number | string; isPrivate: boolean; fromId: number; fromName?: string }>();
+      const cacheKey = (chatId: number | string, messageId: number): string => `${chatId}:${messageId}`;
+      const trimIncomingCache = (): void => {
+        if (incomingCache.size <= 256) return;
+        const sorted = [...incomingCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
+        for (let i = 0; i < sorted.length - 256; i++) incomingCache.delete(sorted[i]![0]);
+      };
       client.addEventHandler(async (event: any) => {
         try {
           const m = event.message;
@@ -114,6 +125,16 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
           if (isPrivate && inputChat && fromId > 0) {
             peerCache.set(fromId, inputChat);
           }
+          // Кэшируем для Task #15 (deletion handler).
+          incomingCache.set(cacheKey(chatId, Number(m.id)), {
+            text,
+            ts: Date.now(),
+            chatId,
+            isPrivate,
+            fromId,
+            fromName: undefined
+          });
+          trimIncomingCache();
           await onMessage({
             text,
             fromId,
@@ -126,6 +147,94 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
           /* ignore per-message errors so the update loop survives */
         }
       }, new NewMessage({}));
+
+      // === Task #15: Raw обработчик UpdateDeleteMessages / UpdateDeleteChannelMessages ===
+      client.addEventHandler(async (update: any) => {
+        try {
+          const cls = update?.className ?? update?.constructor?.name ?? "";
+          if (cls !== "UpdateDeleteMessages" && cls !== "UpdateDeleteChannelMessages") return;
+          const messageIds: number[] = (update.messages ?? []).map((x: any) => Number(x));
+          // Channel вариант несёт channelId, иначе — это PM, нужно пройтись по кэшу.
+          if (cls === "UpdateDeleteChannelMessages") {
+            const chId = -Number(update.channelId?.value ?? update.channelId);
+            for (const mid of messageIds) {
+              const c = incomingCache.get(cacheKey(chId, mid));
+              if (!c) continue;
+              await onMessage({
+                text: "",
+                fromId: c.fromId,
+                chatId: chId,
+                messageId: mid,
+                isPrivate: false,
+                deletion: {
+                  messageId: mid,
+                  text: c.text,
+                  ageSec: Math.max(0, Math.floor((Date.now() - c.ts) / 1000))
+                }
+              }).catch(() => {});
+              incomingCache.delete(cacheKey(chId, mid));
+            }
+            return;
+          }
+          // PM-вариант: неизвестно от какого юзера — ищем по id в кэше по всем пирам.
+          for (const mid of messageIds) {
+            for (const [k, v] of incomingCache.entries()) {
+              if (!k.endsWith(`:${mid}`)) continue;
+              if (!v.isPrivate) continue;
+              await onMessage({
+                text: "",
+                fromId: v.fromId,
+                chatId: v.chatId,
+                messageId: mid,
+                isPrivate: true,
+                deletion: {
+                  messageId: mid,
+                  text: v.text,
+                  ageSec: Math.max(0, Math.floor((Date.now() - v.ts) / 1000))
+                }
+              }).catch(() => {});
+              incomingCache.delete(k);
+              break;
+            }
+          }
+        } catch { /* keep update loop alive */ }
+      }, new Raw({}));
+
+      // === Task #16: эмодзи-реакции юзера на её сообщения. UpdateMessageReactions приходит всем участникам. ===
+      client.addEventHandler(async (update: any) => {
+        try {
+          const cls = update?.className ?? update?.constructor?.name ?? "";
+          if (cls !== "UpdateMessageReactions") return;
+          const peer = update.peer;
+          const isPrivate = peer?.className === "PeerUser";
+          const chatId = isPrivate
+            ? Number(peer.userId?.value ?? peer.userId)
+            : Number(peer?.channelId?.value ?? peer?.chatId?.value ?? 0);
+          if (!chatId) return;
+          const messageId = Number(update.msgId);
+          const reactions = (update.reactions?.recentReactions ?? []) as any[];
+          // Берём последнюю реакцию от партнёра (не от самой девушки).
+          const lastFromOther = reactions
+            .filter((r: any) => Number(r.peerId?.userId?.value ?? r.peerId?.userId ?? 0) !== Number((me?.id as any)?.value ?? me?.id ?? 0))
+            .pop();
+          if (!lastFromOther) return;
+          const emoji = lastFromOther.reaction?.emoticon as string | undefined;
+          if (!emoji) return;
+          const fromId = Number(lastFromOther.peerId?.userId?.value ?? lastFromOther.peerId?.userId ?? 0);
+          await onMessage({
+            text: "",
+            fromId,
+            chatId,
+            messageId,
+            isPrivate,
+            emojiReaction: {
+              emoji,
+              targetMessageId: messageId,
+              removed: false
+            }
+          }).catch(() => {});
+        } catch { /* keep update loop alive */ }
+      }, new Raw({}));
     },
     async sendText(chatId, text) {
       const peer = await resolvePeer(chatId);
@@ -155,6 +264,24 @@ export function makeUserbotAdapter(cfg: ProfileConfig): TgAdapter {
           reaction: [new Api.ReactionEmoji({ emoticon: emoji })]
         }));
       } catch { /* may fail if peer disabled reactions */ }
+    },
+    async editText(chatId, messageId, newText) {
+      try {
+        const peer = await resolvePeer(chatId);
+        await client.invoke(new Api.messages.EditMessage({
+          peer,
+          id: messageId,
+          message: newText
+        }));
+      } catch { /* too old / deleted / no perms */ }
+    },
+    async updateOnlineStatus(online) {
+      // Issue #81 — выставляем статус «в сети» / «не в сети».
+      // Telegram держит online ~60с от последнего UpdateStatus({offline:false}),
+      // поэтому heartbeat должен периодически освежать состояние.
+      try {
+        await client.invoke(new Api.account.UpdateStatus({ offline: !online }));
+      } catch { /* swallow — может быть отключение, флуд-лимит и т.п. */ }
     },
     async blockContact(chatId) {
       const peer = await resolvePeer(chatId);

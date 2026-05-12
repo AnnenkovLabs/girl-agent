@@ -11,5 +11,6 @@ pub mod runtime_client;
 pub mod settings;
 pub mod theme;
 pub mod types;
+pub mod webui_supervisor;
 
 pub use types::*;

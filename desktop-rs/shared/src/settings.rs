@@ -41,6 +41,11 @@ pub struct Settings {
     pub web_token: String,
     /// Auto-start the Web UI server on app launch.
     pub web_enabled: bool,
+    /// Auto-start the Node-based WebUI server (полный React-frontend).
+    /// Если true — кнопка “Open Web UI” откроет новый WebUI вместо legacy-дашборда.
+    pub webui_node_enabled: bool,
+    /// Port for the Node WebUI.
+    pub webui_node_port: u16,
 }
 
 impl Default for Settings {
@@ -52,6 +57,8 @@ impl Default for Settings {
             web_port: 7777,
             web_token: random_token(24),
             web_enabled: true,
+            webui_node_enabled: true,
+            webui_node_port: 3000,
         }
     }
 }

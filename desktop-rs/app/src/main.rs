@@ -19,6 +19,7 @@ use girl_agent_shared::fonts;
 use girl_agent_shared::paths;
 use girl_agent_shared::runtime_client::BotLauncher;
 use girl_agent_shared::settings::Settings;
+use girl_agent_shared::webui_supervisor::{WebUiNodeProcess, WebUiNodeSpec};
 
 use crate::app::{AppContext, Model};
 use crate::state::AppState;
@@ -41,7 +42,11 @@ fn main() -> iced::Result {
     let bot = BotHandle::new(state.clone());
     let token = settings.web_token.clone();
     let port = settings.web_port;
-    let web_url = if settings.web_enabled {
+    // Если включён новый Node-WebUI — кнопка "Open Web UI" ведёт на него (без token),
+    // иначе — на legacy-дашборд (web_port + token).
+    let web_url = if settings.webui_node_enabled {
+        Some(format!("http://127.0.0.1:{}/", settings.webui_node_port))
+    } else if settings.web_enabled {
         Some(format!("http://127.0.0.1:{}/?token={}", port, token))
     } else {
         None
@@ -69,6 +74,27 @@ fn main() -> iced::Result {
             }
         });
     }
+
+    // Дополнительно: поднимаем полный Node-WebUI (порт 3000).
+    // Дочерний процесс живёт всю жизнь десктопного приложения.
+    let _webui_node_handle = if settings.webui_node_enabled {
+        let spec = WebUiNodeSpec {
+            launcher: launcher.clone(),
+            port: settings.webui_node_port,
+            host: "127.0.0.1".to_string(),
+            cwd: None,
+            data_root: Some(data_root.clone()),
+        };
+        match WebUiNodeProcess::spawn(spec) {
+            Ok(h) => Some(h),
+            Err(err) => {
+                tracing::error!(?err, "WebUI (Node) failed to start; открывайте вручную: npx girl-agent");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // The system tray is best-effort. Even if it fails (e.g. on a headless
     // Linux runner), the app still works.
