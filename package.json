@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsup && npm run build:webui",
     "build:server": "tsup",
-    "build:webui": "cd webui && npm install --silent --no-audit --no-fund && npm run build",
+    "build:webui": "cd webui && (npm ci --silent --no-audit --no-fund || npm install --silent --no-audit --no-fund) && npm run build",
     "dev": "tsx src/cli.ts",
     "dev:webui": "cd webui && npm run dev",
     "start": "node dist/cli.js",
