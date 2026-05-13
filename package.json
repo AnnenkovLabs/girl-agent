@@ -1,6 +1,6 @@
 {
   "name": "@thesashadev/girl-agent",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Telegram AI persona engine with memory, schedule, relationship state and MTProto userbot mode.",
   "type": "module",
   "bin": {
