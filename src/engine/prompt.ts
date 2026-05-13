@@ -313,7 +313,7 @@ ${ctx.romanticApproach ? `Последнее сообщение выглядит
     `Стадия: ${stage.label}`,
     `Описание стадии: ${stage.description}`,
     `Score: ${JSON.stringify(rel.score)}`,
-    longTerm ? `## long-term memory о юзере\n${longTerm}` : "",
+    longTerm.trim() ? `## legacy long-term memory о юзере\n${longTerm.slice(-2200)}` : "",
     recall
   ].filter(Boolean).join("\n\n");
 }

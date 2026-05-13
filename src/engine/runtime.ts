@@ -22,6 +22,7 @@ import {
 } from "./conflict.js";
 import { closeCurrentSession, closeStaleSessions } from "./daily-summarizer.js";
 import { loadRealismContext, maybeAdvanceRelationshipTimeline, recordInteractionMemory } from "./realism.js";
+import { mineUnminedDailyLogs } from "./memory-palace.js";
 import { describeIncomingMedia, imagePartFromMedia } from "./media.js";
 import { looksLikeJailbreak, sanitizeModelReply, silentErrorLabel } from "./security.js";
 import { addStickerToLibrary, pickSticker } from "./stickers.js";
@@ -271,7 +272,7 @@ export class Runtime extends EventEmitter {
   private async historyFor(key: string, fromId?: number, restore = false): Promise<ConversationTurn[]> {
     const existing = this.histories.get(key);
     if (existing) return existing;
-    const restored = restore ? await readRecentSessionTurns(this.cfg.slug, this.cfg.tz, fromId, 30) : [];
+    const restored = restore ? await readRecentSessionTurns(this.cfg.slug, this.cfg.tz, fromId, 80) : [];
     const hist = restored.map(t => ({ role: t.role, content: t.content, ts: t.ts }));
     this.histories.set(key, hist);
     this.hydratePresenceTrackers(key, hist);
@@ -537,6 +538,8 @@ export class Runtime extends EventEmitter {
     // Сводки за прошлые дни
     const made = await closeStaleSessions(this.llm, this.cfg);
     if (made > 0) this.emit("event", { type: "info", text: `daily summaries: +${made}` } as RuntimeEvent);
+    const mined = await mineUnminedDailyLogs(this.llm, this.cfg, 2).catch(() => 0);
+    if (mined > 0) this.emit("event", { type: "info", text: `memory palace drawers: +${mined}` } as RuntimeEvent);
   }
 
   /**
@@ -803,6 +806,7 @@ export class Runtime extends EventEmitter {
       }
       this.emit("event", { type: "ignored", text: incomingText, reason: tick.ignoreReason ?? tick.intent } as RuntimeEvent);
       await appendSessionLog(this.cfg.slug, this.cfg.tz, `  -> ignored (${tick.intent}: ${tick.ignoreReason ?? ""})`);
+      recordInteractionMemory(this.llm, this.cfg, incomingText).catch(() => {});
       return;
     }
 
@@ -851,7 +855,7 @@ export class Runtime extends EventEmitter {
       : "";
     const messages: ChatMessage[] = [
       { role: "system" as const, content: sys + `\n\n# Подсказка от behavior-layer\nintent=${tick.intent}\nкол-во пузырей: ${tick.bubbles}${presenceHint ? `\nдоступность: ${presenceHint}` : ""}\n${tick.intent === "short" ? "Отвечай односложно: 'ок', 'ясно', 'и?', 'ну ок'. Без объяснений." : tick.bubbles > 1 ? "Разбей ответ на пузыри СТРОГО строкой '---' (три дефиса на отдельной строке) между ними. КАЖДЫЙ пузырь — отдельное сообщение в тг. ЗАПРЕЩЕНО раскидывать одно сообщение на несколько строк через перенос строки без '---' — в тг это выглядит как одно сообщение в столбик, что палит ИИ. Правильно:\\n\\nпривет\\n---\\nкак сам\\n\\nНеправильно:\\n\\nпривет\\nкак сам" : "Один короткий ответ, без '---'."}${scopeHint}` },
-      ...hist.slice(-30).map(t => ({ role: t.role, content: t.content }))
+      ...hist.slice(-60).map(t => ({ role: t.role, content: t.content }))
     ];
     const image = imagePartFromMedia(incoming?.media);
     if (image) {

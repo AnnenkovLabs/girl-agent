@@ -5,6 +5,7 @@ import { findStage } from "../presets/stages.js";
 import { communicationDecisionState, normalizeCommunicationProfile } from "../presets/communication.js";
 import type { DailyLife } from "./daily-life.js";
 import type { ConflictState } from "./conflict.js";
+import { searchPalaceDrawers } from "./memory-palace.js";
 
 /**
  * Agenda engine — она ведёт mental note "у него завтра соревнования",
@@ -356,7 +357,10 @@ export async function ensureAutonomousAgenda(
   const rel = await readRelationship(cfg.slug);
   const persona = (await readMd(cfg.slug, "persona.md")).slice(0, 900);
   const speech = (await readMd(cfg.slug, "speech.md")).slice(0, 600);
-  const longTerm = (await readMd(cfg.slug, "memory/long-term.md")).slice(0, 1200);
+  const palace = await searchPalaceDrawers(cfg, history.slice(-8).map(m => m.content).join("\n"), 8);
+  const longTerm = palace.length
+    ? palace.map(d => `- [${d.ts.slice(0, 10)} ${d.hall}/${d.room}] ${d.quote}`).join("\n")
+    : (await readMd(cfg.slug, "memory/long-term.md")).slice(-1200);
   const histStr = history.slice(-16).map(m => `${m.role === "user" ? "он" : "она"}: ${m.content}`).join("\n");
   const stateBlock = [
     `# Стадия: ${stage.label} (${cfg.stage})`,

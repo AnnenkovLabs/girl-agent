@@ -56,7 +56,7 @@ const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник п
 - set_stage { stage: string } — установить стадию отношений (id из списка).
 - set_communication_preset { id: string } — применить пресет общения и записать communication.md.
 - write_memory { file: string, content: string } — переписать файл памяти.
-  Допустимые файлы: persona.md, speech.md, boundaries.md, communication.md, long-term.md.
+  Допустимые файлы: persona.md, speech.md, boundaries.md, communication.md, long-term.md, memory/long-term.md, memory/facts.md, memory/uncertain.md, time/promises.md, time/open-loops.md.
 - append_memory { file: string, content: string } — добавить строку в файл памяти.
 - generate_persona { name?: string, age?: number, nationality?: string, notes?: string } — LLM-генерация persona.md/speech.md/communication.md (это занимает ~30s).
 - runtime_action { action: "start"|"stop"|"pause"|"resume"|"restart" } — управление рантаймом.
@@ -172,7 +172,19 @@ const ALLOWED_FIELDS = new Set([
   "communication.initiative", "communication.lifeSharing"
 ]);
 
-const ALLOWED_MEMORY = new Set(["persona.md", "speech.md", "boundaries.md", "communication.md", "long-term.md"]);
+const ALLOWED_MEMORY = new Set([
+  "persona.md",
+  "speech.md",
+  "boundaries.md",
+  "communication.md",
+  "long-term.md",
+  "memory/long-term.md",
+  "memory/facts.md",
+  "memory/uncertain.md",
+  "time/promises.md",
+  "time/open-loops.md",
+  "relationship/timeline.md"
+]);
 
 async function applyTool(cfg: ProfileConfig, call: AssistantToolCall): Promise<{ changed: boolean; message: string }> {
   switch (call.tool) {

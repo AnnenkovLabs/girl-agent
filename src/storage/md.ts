@@ -321,7 +321,11 @@ export function parseSessionLogTurns(raw: string, fromId?: number, limit = 30): 
 
 export async function readRecentSessionTurns(slug: string, tz: string, fromId?: number, limit = 30): Promise<StoredConversationTurn[]> {
   const day = sessionDate(tz);
-  const raw = await readSessionLog(slug, day);
+  const days = [...new Set([...(await listSessionDays(slug)), day])]
+    .filter(d => d <= day)
+    .sort()
+    .slice(-4);
+  const raw = (await Promise.all(days.map(d => readSessionLog(slug, d)))).join("\n");
   return parseSessionLogTurns(raw, fromId, limit);
 }
 

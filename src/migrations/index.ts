@@ -62,10 +62,12 @@ async function writeMigrationState(state: MigrationState): Promise<void> {
 // --- Реестр миграций (добавлять новые сюда в порядке возрастания) ---
 import { migration0112 } from "./0112-add-use-wss-default.js";
 import { migration0113 } from "./0113-ensure-communication-md.js";
+import { migration0114 } from "./0114-memory-palace.js";
 
 export const ALL_MIGRATIONS: Migration[] = [
   migration0112,
   migration0113,
+  migration0114,
 ];
 
 /**

@@ -20,7 +20,12 @@ const MEMORY_FILES = [
   "boundaries.md",
   "communication.md",
   "long-term.md",
-  "memory/long-term.md"
+  "memory/long-term.md",
+  "memory/facts.md",
+  "memory/uncertain.md",
+  "relationship/timeline.md",
+  "time/open-loops.md",
+  "time/promises.md"
 ] as const;
 
 function isAllowedMemoryPath(p: string): boolean {
@@ -33,6 +38,7 @@ function isAllowedMemoryPath(p: string): boolean {
   if ((MEMORY_FILES as readonly string[]).includes(p)) return true;
   if (/^memory\/daily\/\d{4}-\d{2}-\d{2}\.md$/.test(p)) return true;
   if (/^memory\/episodes\/[\w\-]{1,80}\.md$/.test(p)) return true;
+  if (/^memory\/palace\/[\w\-]{1,80}\/[\w\-]{1,80}\/[\w\-]{1,80}\/[\w\-]{1,120}\.md$/.test(p)) return true;
   if (/^log\/\d{4}-\d{2}-\d{2}\.md$/.test(p)) return true;
   return false;
 }
@@ -200,6 +206,25 @@ export function registerProfileRoutes(r: Router): void {
       const list = await fs.readdir(epDir);
       for (const f of list) if (/^[\w\-]{1,80}\.md$/.test(f)) entries.push({ rel: `memory/episodes/${f}` });
     } catch { /* no episodes dir */ }
+    try {
+      const palaceDir = path.join(dir, "memory", "palace");
+      const wings = await fs.readdir(palaceDir, { withFileTypes: true });
+      for (const wing of wings) {
+        if (!wing.isDirectory() || !/^[\w\-]{1,80}$/.test(wing.name)) continue;
+        const halls = await fs.readdir(path.join(palaceDir, wing.name), { withFileTypes: true });
+        for (const hall of halls) {
+          if (!hall.isDirectory() || !/^[\w\-]{1,80}$/.test(hall.name)) continue;
+          const rooms = await fs.readdir(path.join(palaceDir, wing.name, hall.name), { withFileTypes: true });
+          for (const room of rooms) {
+            if (!room.isDirectory() || !/^[\w\-]{1,80}$/.test(room.name)) continue;
+            const drawers = await fs.readdir(path.join(palaceDir, wing.name, hall.name, room.name));
+            for (const drawer of drawers) {
+              if (/^[\w\-]{1,120}\.md$/.test(drawer)) entries.push({ rel: `memory/palace/${wing.name}/${hall.name}/${room.name}/${drawer}` });
+            }
+          }
+        }
+      }
+    } catch { /* no palace dir */ }
     for (const e of entries) {
       try {
         const stat = await fs.stat(path.join(dir, e.rel));

@@ -7,6 +7,7 @@ import {
   readSessionLog, writeDailySummary, readDailySummary,
   listSessionDays, sessionDate
 } from "../storage/md.js";
+import { mineDailyLogToPalace } from "./memory-palace.js";
 
 const SYS = `Ты — внутренний дневник девушки. По сырому логу её переписки за день напиши КРАТКУЮ сводку для долгосрочной памяти. От первого лица, в её манере (lowercase, без markdown). Что было, что обсуждали, как она в итоге восприняла его, какие появились новые факты о нём, бесило ли что-то.`;
 
@@ -31,6 +32,7 @@ export async function buildDailySummary(
   if (!log || log.length < 50) return null;
 
   try {
+    await mineDailyLogToPalace(llm, cfg, day).catch(() => 0);
     const raw = await llm.chat([
       { role: "system", content: SYS },
       {
@@ -39,7 +41,7 @@ export async function buildDailySummary(
 
 Лог переписки за день:
 """
-${log.slice(0, 8000)}
+${log.slice(-8000)}
 """
 
 Верни STRICT JSON:
