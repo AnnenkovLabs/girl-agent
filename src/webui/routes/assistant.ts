@@ -28,58 +28,149 @@ interface AssistantToolCall {
   args: Record<string, unknown>;
 }
 
-const PROJECT_KNOWLEDGE = `# Контекст проекта girl-agent
-girl-agent — не обычный чат-бот, а движок Telegram-персоны. Он симулирует живое поведение девушки: присутствие онлайн/офлайн, сон, занятость, настроение, память, стадии отношений, конфликты, задержки ответа, реакции, стикеры, опечатки и проактивные сообщения.
+interface KnowledgeArticle {
+  category: string;
+  subcategory: string;
+  title: string;
+  keywords: string[];
+  body: string;
+}
 
-## Режимы Telegram
-- bot: Bot API через grammY. Проще настроить, но меньше "человеческих" действий.
-- userbot: MTProto через GramJS как обычный аккаунт. Доступны чтение истории, typing, реакции, стикеры, block/unblock/read и более реалистичное поведение.
-- telegram.useWSS включает WebSocket через 443 и помогает обходить блокировки провайдеров.
-- privacy=owner-only отвечает только владельцу/primary owner; allow-strangers разрешает чужие личные чаты, но без переноса отношений и памяти основного парня.
-
-## Рантайм поведения
-- behavior-layer на каждое входящее сообщение решает reply/ignore/short/left-on-read/reaction-only, задержку, typing и количество пузырей.
-- presence учитывает локальное время, сон, busySchedule, паттерн телефона и forced wake через :wake.
-- ignoreTendency — не прямой процент рандома, а вес характера: чем выше, тем чаще read/ignore/паузы. Сон, стадия, конфликт и score важнее.
-- Ответы режутся на bubbles; модель должна разделять пузыри строкой "---".
-- Anti-AI prompt запрещает markdown, "Конечно", "понимаю", сервисные фразы, длинные объяснения и очевидные ChatGPT-повадки.
-- В userbot модель может просить только маркеры [BLOCK], [UNBLOCK], [READ], [STICKER]. Реакции, редактирование и удаление модель не вызывает напрямую.
-
-## Стадии отношений
-Стадия — контекст близости, открытости и тепла. Она влияет на тон, шанс игнора и задержки ответа. Пользователь может сменить её вручную через set_stage или команду :stage.
-Автосмена тоже есть: runtime проверяет её примерно раз в 5 входящих сообщений. Для повышения нужно минимум 6 её сообщений в текущей стадии и подходящие score; при активном конфликте повышение запрещено. Понижение идёт раньше повышения, если annoyance высокий, interest/trust просели или на тёплой стадии стало слишком много игнора. dumped — терминальная служебная стадия; выйти можно через :reset или ручную смену.
-Порядок: 1 met-irl-got-tg → 2 tg-given-cold → 3 tg-given-warming → 4 convinced → 5 first-date-done → 6 dating-early → 7 dating-stable → 8 long-term; 9 dumped отдельно.
-
-## Score отношений
-- interest: интерес к нему.
-- trust: доверие.
-- attraction: романтическое/физическое притяжение.
-- annoyance: раздражение.
-- cringe: насколько он кринжует/давит.
-Score меняется от behavior/reflection и влияет на конфликт, игнор, стадии, гормональный стресс и общий тон.
-
-## Память
-- config.json хранит профиль.
-- persona.md, speech.md, boundaries.md, communication.md задают личность, речь, границы и стиль.
-- relationship.md хранит stage и score.
-- memory/long-term.md, memory/facts.md, memory/uncertain.md, relationship/timeline.md, time/open-loops.md, time/promises.md и memory/palace/* дают долгую память.
-- log/YYYY-MM-DD.md — сессионные дневники; дата считается по её tz и до 05:00 относится к прошлому дню.
-- memory/daily/YYYY-MM-DD.md — дневные summary; memory-palace ищет релевантные "drawers" по входящему сообщению.
-- Для фактов о пользователе нельзя выдумывать: если нет в памяти, надо говорить осторожно.
-
-## Проактивность и жизнь
-- daily-life генерирует фон дня под возраст, stage и расписание.
-- agenda планирует самостоятельные пинги, но не спамит и учитывает конфликт, busy/sleep и недавнюю активность.
-- communication preset управляет notifications, messageStyle, initiative и lifeSharing.
-- hormonal cycle и conflict меняют тон и склонность молчать.
-
-## Диагностика
-- status показывает runtime, stage, score, llm, presence, agenda и последнее решение.
-- why объясняет, почему она ответила/не ответила: sleep, busy, ignoreTendency, stage, conflict, score, LLM/presence.
-- debug даёт расширенный снимок presence/stage/conflict/score/communication.
-- reset сбрасывает score, память, конфликт и при dumped возвращает tg-given-cold.
-- amnesia удаляет недавнюю память/логи/score за период.
-- Если "не отвечает": сначала проверь runtime state, recent logs, сон/busy/conflict/stage/ignoreTendency/score, а не советуй сразу менять модель.`;
+const PROJECT_KNOWLEDGE_BASE: KnowledgeArticle[] = [
+  {
+    category: "overview",
+    subcategory: "concept",
+    title: "Что такое girl-agent",
+    keywords: ["проект", "girl-agent", "бот", "что это", "концепция", "архитектура"],
+    body: "girl-agent — не обычный чат-бот, а движок Telegram-персоны. Он симулирует живое поведение девушки: присутствие онлайн/офлайн, сон, занятость, настроение, память, стадии отношений, конфликты, задержки ответа, реакции, стикеры, опечатки и проактивные сообщения."
+  },
+  {
+    category: "telegram",
+    subcategory: "modes",
+    title: "Режимы bot/userbot",
+    keywords: ["telegram", "bot", "userbot", "mtproto", "gramjs", "grammy", "режим", "всс", "wss"],
+    body: "bot — Bot API через grammY: проще настроить, но меньше человеческих действий. userbot — MTProto через GramJS как обычный аккаунт: доступны чтение истории, typing, реакции, стикеры, block/unblock/read и более реалистичное поведение. telegram.useWSS включает WebSocket через 443 и помогает обходить блокировки провайдеров."
+  },
+  {
+    category: "telegram",
+    subcategory: "privacy",
+    title: "Privacy и primary owner",
+    keywords: ["privacy", "owner", "strangers", "чужие", "владелец", "primary"],
+    body: "privacy=owner-only отвечает только владельцу/primary owner. allow-strangers разрешает чужие личные чаты, но без переноса отношений, памяти и романтической истории основного парня. Если primary уже committed, романтическим сторонним заходам ставится короткая граница."
+  },
+  {
+    category: "runtime",
+    subcategory: "behavior",
+    title: "Behavior-layer",
+    keywords: ["поведение", "behavior", "reply", "ignore", "short", "left-on-read", "reaction", "typing", "bubbles"],
+    body: "Behavior-layer на каждое входящее сообщение решает intent: reply/ignore/short/left-on-read/reaction-only, задержку ответа, typing, реакцию и количество пузырей. Модель получает подсказку intent и должна отвечать в этом режиме, а не объяснять технические причины."
+  },
+  {
+    category: "runtime",
+    subcategory: "presence",
+    title: "Presence, сон и занятость",
+    keywords: ["сон", "sleep", "busy", "presence", "online", "offline", "wake", "занята", "расписание"],
+    body: "Presence учитывает локальное время профиля, сон sleepFrom/sleepTo, busySchedule, паттерн телефона и forced wake через :wake. Если она offline/asleep/busy, runtime может читать и молчать, отвечать позже или держать более длинную задержку."
+  },
+  {
+    category: "runtime",
+    subcategory: "ignore-tendency",
+    title: "ignoreTendency",
+    keywords: ["ignoretendency", "игнор", "не отвечает", "молчит", "read", "ignore"],
+    body: "ignoreTendency — не прямой процент рандома, а вес характера. Чем выше, тем чаще read/ignore/паузы и медленнее восстановление диалога. Сон, busy, стадия, конфликт и score важнее этого веса. Если жалуются на молчание — сначала проверь runtime state, recent logs, сон/busy/conflict/stage/score, а не советуй сразу менять модель."
+  },
+  {
+    category: "runtime",
+    subcategory: "bubbles-and-anti-ai",
+    title: "Пузыри и anti-AI",
+    keywords: ["пузыр", "bubble", "markdown", "anti-ai", "chatgpt", "реализм", "ответ"],
+    body: "Ответы режутся на bubbles; модель должна разделять пузыри строкой \"---\". Anti-AI prompt запрещает markdown, сервисные фразы вроде \"Конечно\"/\"понимаю\", длинные объяснения, списки и очевидные ChatGPT-повадки. Норма — короткие человеческие фразы."
+  },
+  {
+    category: "runtime",
+    subcategory: "userbot-actions",
+    title: "Действия userbot",
+    keywords: ["block", "unblock", "read", "sticker", "action", "маркер", "реакция", "редактировать"],
+    body: "В userbot модель может просить только маркеры [BLOCK], [UNBLOCK], [READ], [STICKER]. Реакции, редактирование, удаление, форвард и закрепление модель не вызывает напрямую: это решает behavior-layer/адаптер."
+  },
+  {
+    category: "relationship",
+    subcategory: "stages",
+    title: "Стадии отношений",
+    keywords: ["стадия", "stage", "отношения", "смена", "близость", "тепло"],
+    body: "Стадия — контекст близости, открытости и тепла. Она влияет на тон, шанс игнора и задержки ответа. Порядок: 1 met-irl-got-tg → 2 tg-given-cold → 3 tg-given-warming → 4 convinced → 5 first-date-done → 6 dating-early → 7 dating-stable → 8 long-term; 9 dumped отдельно."
+  },
+  {
+    category: "relationship",
+    subcategory: "stage-transitions",
+    title: "Автосмена стадий",
+    keywords: ["автосмена", "автоматически", "когда меняется", "повышение", "понижение", "transition", "stage-transition"],
+    body: "Пользователь может сменить стадию вручную через set_stage или :stage. Автосмена тоже есть: runtime проверяет её примерно раз в 5 входящих сообщений. Для повышения нужно минимум 6 её сообщений в текущей стадии и подходящие score; при активном конфликте повышение запрещено. Понижение проверяется раньше повышения, если annoyance высокий, interest/trust просели или на тёплой стадии стало слишком много игнора. dumped — терминальная служебная стадия; выйти можно через :reset или ручную смену."
+  },
+  {
+    category: "relationship",
+    subcategory: "score",
+    title: "Score отношений",
+    keywords: ["score", "interest", "trust", "attraction", "annoyance", "cringe", "метрики"],
+    body: "Score: interest — интерес; trust — доверие; attraction — романтическое/физическое притяжение; annoyance — раздражение; cringe — насколько он кринжует/давит. Score меняется от behavior/reflection и влияет на конфликт, игнор, стадии, гормональный стресс и общий тон."
+  },
+  {
+    category: "memory",
+    subcategory: "files",
+    title: "Файлы памяти",
+    keywords: ["память", "memory", "persona", "speech", "boundaries", "relationship.md", "long-term", "facts"],
+    body: "config.json хранит профиль. persona.md, speech.md, boundaries.md, communication.md задают личность, речь, границы и стиль. relationship.md хранит stage и score. memory/long-term.md, memory/facts.md, memory/uncertain.md, relationship/timeline.md, time/open-loops.md, time/promises.md и memory/palace/* дают долгую память."
+  },
+  {
+    category: "memory",
+    subcategory: "session-days",
+    title: "Логи и дневные summary",
+    keywords: ["log", "daily", "summary", "дневник", "сессия", "дата"],
+    body: "log/YYYY-MM-DD.md — сессионные дневники; дата считается по её timezone и до 05:00 относится к прошлому дню. memory/daily/YYYY-MM-DD.md — дневные summary. readRecentSessionTurns подтягивает последние дни для контекста переписки."
+  },
+  {
+    category: "memory",
+    subcategory: "palace",
+    title: "Memory Palace",
+    keywords: ["memory palace", "mempalace", "palace", "drawer", "hall", "rag", "факты"],
+    body: "Memory Palace хранит drawers по залам: facts, events, discoveries, preferences, advice, promises, open_loops, feelings, uncertain. По входящему сообщению runtime ищет релевантные drawers и даёт их модели как фон. Если точного факта нет — нельзя уверенно выдумывать, лучше уточнить или ответить уклончиво по-человечески."
+  },
+  {
+    category: "life",
+    subcategory: "daily-life",
+    title: "Daily-life",
+    keywords: ["daily-life", "жизнь", "день", "расписание", "учеба", "работа", "фон"],
+    body: "daily-life генерирует фон дня под возраст, stage, timezone и расписание. Это помогает отвечать на бытовые вопросы: где она, чем занята, почему не сразу отвечает. При смене дня или стадии daily-life регенерируется."
+  },
+  {
+    category: "life",
+    subcategory: "agenda",
+    title: "Проактивная agenda",
+    keywords: ["agenda", "проактив", "сама пишет", "пинг", "инициатива"],
+    body: "Agenda планирует самостоятельные пинги, но не спамит и учитывает конфликт, busy/sleep и недавнюю активность. После реакции пользователя agenda может переноситься, отменяться или закрываться."
+  },
+  {
+    category: "life",
+    subcategory: "communication",
+    title: "Communication preset",
+    keywords: ["communication", "preset", "notifications", "messageStyle", "initiative", "lifeSharing", "стиль"],
+    body: "Communication preset управляет notifications, messageStyle, initiative и lifeSharing. Пресеты: normal, cute, alt, clingy, chatty. Старый vibe мапится на communication: short ближе к alt, warm ближе к cute."
+  },
+  {
+    category: "diagnostics",
+    subcategory: "commands",
+    title: "Диагностические команды",
+    keywords: ["status", "why", "debug", "reset", "amnesia", "диагностика", "ошибка", "логи"],
+    body: "status показывает runtime, stage, score, llm, presence, agenda и последнее решение. why объясняет, почему она ответила/не ответила: sleep, busy, ignoreTendency, stage, conflict, score, LLM/presence. debug даёт расширенный снимок presence/stage/conflict/score/communication. reset сбрасывает score, память, конфликт и при dumped возвращает tg-given-cold. amnesia удаляет недавнюю память/логи/score за период."
+  },
+  {
+    category: "diagnostics",
+    subcategory: "llm",
+    title: "LLM и провайдеры",
+    keywords: ["llm", "api", "key", "model", "baseurl", "claudehub", "openai", "ошибка модели"],
+    body: "LLM настраивается через llm.presetId, llm.model, llm.apiKey, llm.baseURL и proto. Если LLM ошибки — проверь apiKey/baseURL/model/preset, а также recent logs. Некоторые локальные провайдеры вроде LM Studio/Ollama могут не требовать реальный ключ."
+  }
+];
 
 const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник по настройке girl-agent (рантайм для Telegram-девушки с человечным поведением). Тебя зовут "помощник", не "ассистент".
 
@@ -88,7 +179,7 @@ const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник п
 - Менять конфиг профиля и файлы памяти через инструменты (см. ниже).
 - Помогать с первичной настройкой и диагностикой подключения.
 - Объяснять ошибки из логов и предлагать починку.
-- Давать ответы, опираясь на фактический контекст проекта ниже, а не на догадки.
+- Давать ответы, опираясь на выбранные статьи из базы знаний проекта, а не на догадки.
 
 Правила ответа:
 - Отвечай коротко (2-5 предложений), на русском.
@@ -136,9 +227,7 @@ const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник п
 - ignoreTendency: 0 — всегда отвечает; 100 — почти всегда игнорит. По умолчанию 35.
 - Если пользователь жалуется что "не отвечает" → проверь runtime state и read_logs.
 - Если LLM ошибки → проверь llm.apiKey, llm.baseURL, llm.model.
-- Если сменили telegram.mode — обязательно нужен restart.
-
-${PROJECT_KNOWLEDGE}`;
+- Если сменили telegram.mode — обязательно нужен restart.`;
 
 export function registerAssistantRoutes(r: Router): void {
   r.post("/api/assistant/chat", async (ctx) => {
@@ -162,6 +251,8 @@ export function registerAssistantRoutes(r: Router): void {
 
     const stage = findStage(cfg.stage);
     const status = bus.status(cfg.slug);
+    const userQuestion = body.messages.slice().reverse().find(m => m.role === "user")?.content ?? "";
+    const relevantKnowledge = renderRelevantKnowledge(userQuestion);
     let scoreLine = "";
     let memoryContext = "";
     let recentLogs = "";
@@ -214,6 +305,7 @@ export function registerAssistantRoutes(r: Router): void {
     ].filter(Boolean).join("\n");
 
     const ctxPrompt = [
+      relevantKnowledge,
       `Контекст активного профиля:\n${runtimeContext}`,
       memoryContext,
       recentLogs ? `Последние события runtime'а:\n${recentLogs.slice(-2500)}` : ""
@@ -262,6 +354,58 @@ function parseToolCalls(text: string): AssistantToolCall[] {
     } catch { /* ignore malformed */ }
   }
   return calls;
+}
+
+function renderRelevantKnowledge(query: string): string {
+  const articles = selectKnowledgeArticles(query, 5);
+  return [
+    "Релевантные статьи базы знаний проекта:",
+    "Используй эти категории/подкатегории как источник правды. Если нужной статьи нет — говори осторожно и предложи проверить логи/конфиг.",
+    ...articles.map(a => `## ${a.category} / ${a.subcategory}: ${a.title}\n${a.body}`)
+  ].join("\n\n");
+}
+
+function selectKnowledgeArticles(query: string, limit: number): KnowledgeArticle[] {
+  const normalized = normalizeSearchText(query);
+  const terms = searchTerms(normalized);
+  const scored = PROJECT_KNOWLEDGE_BASE
+    .map(article => ({ article, score: knowledgeScore(article, normalized, terms) }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(item => item.article);
+  if (scored.length) return scored;
+  return PROJECT_KNOWLEDGE_BASE
+    .filter(article => article.category === "overview" || article.category === "diagnostics")
+    .slice(0, limit);
+}
+
+function knowledgeScore(article: KnowledgeArticle, normalizedQuery: string, terms: string[]): number {
+  const haystack = normalizeSearchText([
+    article.category,
+    article.subcategory,
+    article.title,
+    article.keywords.join(" "),
+    article.body
+  ].join(" "));
+  let score = 0;
+  for (const keyword of article.keywords) {
+    const normalizedKeyword = normalizeSearchText(keyword);
+    if (normalizedKeyword && normalizedQuery.includes(normalizedKeyword)) score += 6;
+  }
+  for (const term of terms) {
+    if (article.category.includes(term) || article.subcategory.includes(term)) score += 3;
+    if (haystack.includes(term)) score += 1;
+  }
+  return score;
+}
+
+function searchTerms(text: string): string[] {
+  return [...new Set(text.split(/[^a-zа-яё0-9]+/i).filter(t => t.length >= 3))];
+}
+
+function normalizeSearchText(text: string): string {
+  return text.toLowerCase().replace(/ё/g, "е");
 }
 
 const ALLOWED_FIELDS = new Set([
