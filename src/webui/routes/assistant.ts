@@ -14,8 +14,10 @@ import { findStage, STAGE_PRESETS } from "../../presets/stages.js";
 import { findCommunicationPreset, COMMUNICATION_PRESETS } from "../../presets/communication.js";
 import { LLM_PRESETS } from "../../presets/llm.js";
 import { generatePersonaPack } from "../../engine/persona-gen.js";
+import { maybeAdvanceRelationshipTimeline } from "../../engine/realism.js";
 import type { ProfileConfig, StageId } from "../../types.js";
 import { bus } from "../runtime-bus.js";
+import { renderRelevantKnowledge } from "../assistant-knowledge.js";
 
 interface AssistantTurn {
   role: "system" | "user" | "assistant";
@@ -27,6 +29,7 @@ interface AssistantToolCall {
   args: Record<string, unknown>;
 }
 
+
 const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник по настройке girl-agent (рантайм для Telegram-девушки с человечным поведением). Тебя зовут "помощник", не "ассистент".
 
 Твоя задача:
@@ -34,6 +37,7 @@ const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник п
 - Менять конфиг профиля и файлы памяти через инструменты (см. ниже).
 - Помогать с первичной настройкой и диагностикой подключения.
 - Объяснять ошибки из логов и предлагать починку.
+- Давать ответы, опираясь на выбранные статьи из базы знаний проекта, а не на догадки.
 
 Правила ответа:
 - Отвечай коротко (2-5 предложений), на русском.
@@ -79,7 +83,7 @@ const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник п
 
 Важные подсказки:
 - ignoreTendency: 0 — всегда отвечает; 100 — почти всегда игнорит. По умолчанию 35.
-- Если пользователь жалуется что "не отвечает" → проверь runtime-action statе и read_logs.
+- Если пользователь жалуется что "не отвечает" → проверь runtime state и read_logs.
 - Если LLM ошибки → проверь llm.apiKey, llm.baseURL, llm.model.
 - Если сменили telegram.mode — обязательно нужен restart.`;
 
@@ -104,19 +108,66 @@ export function registerAssistantRoutes(r: Router): void {
     }
 
     const stage = findStage(cfg.stage);
+    const status = bus.status(cfg.slug);
+    const userQuestion = body.messages.slice().reverse().find(m => m.role === "user")?.content ?? "";
+    const relevantKnowledge = renderRelevantKnowledge(userQuestion);
     let scoreLine = "";
+    let memoryContext = "";
     let recentLogs = "";
     try {
       const rel = await readRelationship(cfg.slug);
       scoreLine = ` score=${JSON.stringify(rel.score)}`;
     } catch { /* ignore */ }
     try {
+      const [persona, speech, communication, boundaries, longTerm, facts, uncertain, timeline, openLoops, promises] = await Promise.all([
+        readMd(cfg.slug, "persona.md"),
+        readMd(cfg.slug, "speech.md"),
+        readMd(cfg.slug, "communication.md"),
+        readMd(cfg.slug, "boundaries.md"),
+        readMd(cfg.slug, "memory/long-term.md"),
+        readMd(cfg.slug, "memory/facts.md"),
+        readMd(cfg.slug, "memory/uncertain.md"),
+        readMd(cfg.slug, "relationship/timeline.md"),
+        readMd(cfg.slug, "time/open-loops.md"),
+        readMd(cfg.slug, "time/promises.md")
+      ]);
+      memoryContext = renderAssistantMemoryContext({
+        persona,
+        speech,
+        communication,
+        boundaries,
+        longTerm,
+        facts,
+        uncertain,
+        timeline,
+        openLoops,
+        promises
+      });
+    } catch { /* ignore */ }
+    try {
       const buf = bus.recentLogs(cfg.slug, 25);
       recentLogs = buf.map(e => `[${e.type}] ${e.text ?? ""}`).join("\n");
     } catch { /* ignore */ }
 
-    const ctxPrompt = `Текущий профиль: ${cfg.name}, ${cfg.age}, стадия "${stage.label}" (${cfg.stage}), privacy=${cfg.privacy ?? "owner-only"}, ignoreTendency=${cfg.ignoreTendency ?? 35}, llm=${cfg.llm.presetId}/${cfg.llm.model}, telegram=${cfg.mode ?? "bot"}.${scoreLine}` +
-      (recentLogs ? `\n\nПоследние события runtime'а (для контекста):\n${recentLogs.slice(-1500)}` : "");
+    const runtimeContext = [
+      `Текущий профиль: ${cfg.name}, ${cfg.age}, ${cfg.nationality}, tz=${cfg.tz}`,
+      `slug=${cfg.slug}, runtime=${status.state}${status.lastError ? `, lastError=${status.lastError}` : ""}`,
+      `стадия "${stage.label}" (${cfg.stage}), ${stage.description}`,
+      `stage defaults: ignoreChance=${stage.defaults.ignoreChance}, replyDelaySec=${stage.defaults.replyDelaySec[0]}-${stage.defaults.replyDelaySec[1]}`,
+      `privacy=${cfg.privacy ?? "owner-only"}, ownerId=${cfg.ownerId ?? "—"}, ignoreTendency=${cfg.ignoreTendency ?? 35}`,
+      `sleep=${cfg.sleepFrom}:00-${cfg.sleepTo}:00, nightWakeChance=${cfg.nightWakeChance}`,
+      `communication=${cfg.communication ? JSON.stringify(cfg.communication) : "default"}, vibe=${cfg.vibe ?? "—"}`,
+      `llm=${cfg.llm.presetId}/${cfg.llm.model} (${cfg.llm.proto}), telegram=${cfg.mode ?? "bot"}, useWSS=${cfg.telegram.useWSS ?? true}`,
+      `busySchedule=${cfg.busySchedule?.length ? JSON.stringify(cfg.busySchedule).slice(0, 1000) : "[]"}`,
+      scoreLine.trim()
+    ].filter(Boolean).join("\n");
+
+    const ctxPrompt = [
+      relevantKnowledge,
+      `Контекст активного профиля:\n${runtimeContext}`,
+      memoryContext,
+      recentLogs ? `Последние события runtime'а:\n${recentLogs.slice(-2500)}` : ""
+    ].filter(Boolean).join("\n\n");
 
     const llm = makeLLM(cfg.llm);
     const messages = [
@@ -201,11 +252,13 @@ async function applyTool(cfg: ProfileConfig, call: AssistantToolCall): Promise<{
       const stage = String(call.args?.stage ?? "") as StageId;
       const found = STAGE_PRESETS.find(s => s.id === stage);
       if (!found) return { changed: false, message: `unknown stage: ${stage}. Доступные: ${STAGE_PRESETS.map(s => s.id).join(", ")}` };
+      const prevStage = cfg.stage;
       cfg.stage = stage;
       try {
         const rel = await readRelationship(cfg.slug);
         await writeRelationship(cfg.slug, { ...rel, stage });
       } catch { /* ignore */ }
+      await maybeAdvanceRelationshipTimeline(cfg, prevStage, stage);
       return { changed: true, message: `stage = ${stage} (${found.label})` };
     }
 
@@ -327,6 +380,35 @@ ${preset.description}
     default:
       return { changed: false, message: `unknown tool: ${call.tool}` };
   }
+}
+
+function renderAssistantMemoryContext(parts: Record<string, string>): string {
+  const sections = [
+    ["persona.md", parts.persona],
+    ["speech.md", parts.speech],
+    ["communication.md", parts.communication],
+    ["boundaries.md", parts.boundaries],
+    ["memory/facts.md", parts.facts],
+    ["memory/uncertain.md", parts.uncertain],
+    ["memory/long-term.md", parts.longTerm],
+    ["relationship/timeline.md", parts.timeline],
+    ["time/open-loops.md", parts.openLoops],
+    ["time/promises.md", parts.promises]
+  ]
+    .map(([name, text]) => renderContextSection(name, text))
+    .filter(Boolean);
+  return sections.length ? `Память и файлы профиля:\n${sections.join("\n\n")}` : "";
+}
+
+function renderContextSection(name: string, text: string): string {
+  const clean = text.trim();
+  if (!clean) return "";
+  return `## ${name}\n${tail(clean, 1400)}`;
+}
+
+function tail(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return text.slice(-limit);
 }
 
 function setNested(obj: Record<string, unknown>, path: string, value: unknown): void {
