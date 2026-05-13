@@ -14,6 +14,7 @@ import { findStage, STAGE_PRESETS } from "../../presets/stages.js";
 import { findCommunicationPreset, COMMUNICATION_PRESETS } from "../../presets/communication.js";
 import { LLM_PRESETS } from "../../presets/llm.js";
 import { generatePersonaPack } from "../../engine/persona-gen.js";
+import { maybeAdvanceRelationshipTimeline } from "../../engine/realism.js";
 import type { ProfileConfig, StageId } from "../../types.js";
 import { bus } from "../runtime-bus.js";
 
@@ -27,6 +28,59 @@ interface AssistantToolCall {
   args: Record<string, unknown>;
 }
 
+const PROJECT_KNOWLEDGE = `# Контекст проекта girl-agent
+girl-agent — не обычный чат-бот, а движок Telegram-персоны. Он симулирует живое поведение девушки: присутствие онлайн/офлайн, сон, занятость, настроение, память, стадии отношений, конфликты, задержки ответа, реакции, стикеры, опечатки и проактивные сообщения.
+
+## Режимы Telegram
+- bot: Bot API через grammY. Проще настроить, но меньше "человеческих" действий.
+- userbot: MTProto через GramJS как обычный аккаунт. Доступны чтение истории, typing, реакции, стикеры, block/unblock/read и более реалистичное поведение.
+- telegram.useWSS включает WebSocket через 443 и помогает обходить блокировки провайдеров.
+- privacy=owner-only отвечает только владельцу/primary owner; allow-strangers разрешает чужие личные чаты, но без переноса отношений и памяти основного парня.
+
+## Рантайм поведения
+- behavior-layer на каждое входящее сообщение решает reply/ignore/short/left-on-read/reaction-only, задержку, typing и количество пузырей.
+- presence учитывает локальное время, сон, busySchedule, паттерн телефона и forced wake через :wake.
+- ignoreTendency — не прямой процент рандома, а вес характера: чем выше, тем чаще read/ignore/паузы. Сон, стадия, конфликт и score важнее.
+- Ответы режутся на bubbles; модель должна разделять пузыри строкой "---".
+- Anti-AI prompt запрещает markdown, "Конечно", "понимаю", сервисные фразы, длинные объяснения и очевидные ChatGPT-повадки.
+- В userbot модель может просить только маркеры [BLOCK], [UNBLOCK], [READ], [STICKER]. Реакции, редактирование и удаление модель не вызывает напрямую.
+
+## Стадии отношений
+Стадия — контекст близости, открытости и тепла. Она влияет на тон, шанс игнора и задержки ответа. Пользователь может сменить её вручную через set_stage или команду :stage.
+Автосмена тоже есть: runtime проверяет её примерно раз в 5 входящих сообщений. Для повышения нужно минимум 6 её сообщений в текущей стадии и подходящие score; при активном конфликте повышение запрещено. Понижение идёт раньше повышения, если annoyance высокий, interest/trust просели или на тёплой стадии стало слишком много игнора. dumped — терминальная служебная стадия; выйти можно через :reset или ручную смену.
+Порядок: 1 met-irl-got-tg → 2 tg-given-cold → 3 tg-given-warming → 4 convinced → 5 first-date-done → 6 dating-early → 7 dating-stable → 8 long-term; 9 dumped отдельно.
+
+## Score отношений
+- interest: интерес к нему.
+- trust: доверие.
+- attraction: романтическое/физическое притяжение.
+- annoyance: раздражение.
+- cringe: насколько он кринжует/давит.
+Score меняется от behavior/reflection и влияет на конфликт, игнор, стадии, гормональный стресс и общий тон.
+
+## Память
+- config.json хранит профиль.
+- persona.md, speech.md, boundaries.md, communication.md задают личность, речь, границы и стиль.
+- relationship.md хранит stage и score.
+- memory/long-term.md, memory/facts.md, memory/uncertain.md, relationship/timeline.md, time/open-loops.md, time/promises.md и memory/palace/* дают долгую память.
+- log/YYYY-MM-DD.md — сессионные дневники; дата считается по её tz и до 05:00 относится к прошлому дню.
+- memory/daily/YYYY-MM-DD.md — дневные summary; memory-palace ищет релевантные "drawers" по входящему сообщению.
+- Для фактов о пользователе нельзя выдумывать: если нет в памяти, надо говорить осторожно.
+
+## Проактивность и жизнь
+- daily-life генерирует фон дня под возраст, stage и расписание.
+- agenda планирует самостоятельные пинги, но не спамит и учитывает конфликт, busy/sleep и недавнюю активность.
+- communication preset управляет notifications, messageStyle, initiative и lifeSharing.
+- hormonal cycle и conflict меняют тон и склонность молчать.
+
+## Диагностика
+- status показывает runtime, stage, score, llm, presence, agenda и последнее решение.
+- why объясняет, почему она ответила/не ответила: sleep, busy, ignoreTendency, stage, conflict, score, LLM/presence.
+- debug даёт расширенный снимок presence/stage/conflict/score/communication.
+- reset сбрасывает score, память, конфликт и при dumped возвращает tg-given-cold.
+- amnesia удаляет недавнюю память/логи/score за период.
+- Если "не отвечает": сначала проверь runtime state, recent logs, сон/busy/conflict/stage/ignoreTendency/score, а не советуй сразу менять модель.`;
+
 const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник по настройке girl-agent (рантайм для Telegram-девушки с человечным поведением). Тебя зовут "помощник", не "ассистент".
 
 Твоя задача:
@@ -34,6 +88,7 @@ const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник п
 - Менять конфиг профиля и файлы памяти через инструменты (см. ниже).
 - Помогать с первичной настройкой и диагностикой подключения.
 - Объяснять ошибки из логов и предлагать починку.
+- Давать ответы, опираясь на фактический контекст проекта ниже, а не на догадки.
 
 Правила ответа:
 - Отвечай коротко (2-5 предложений), на русском.
@@ -79,9 +134,11 @@ const ASSISTANT_SYSTEM = `Ты — встроенный ИИ-помощник п
 
 Важные подсказки:
 - ignoreTendency: 0 — всегда отвечает; 100 — почти всегда игнорит. По умолчанию 35.
-- Если пользователь жалуется что "не отвечает" → проверь runtime-action statе и read_logs.
+- Если пользователь жалуется что "не отвечает" → проверь runtime state и read_logs.
 - Если LLM ошибки → проверь llm.apiKey, llm.baseURL, llm.model.
-- Если сменили telegram.mode — обязательно нужен restart.`;
+- Если сменили telegram.mode — обязательно нужен restart.
+
+${PROJECT_KNOWLEDGE}`;
 
 export function registerAssistantRoutes(r: Router): void {
   r.post("/api/assistant/chat", async (ctx) => {
@@ -104,19 +161,63 @@ export function registerAssistantRoutes(r: Router): void {
     }
 
     const stage = findStage(cfg.stage);
+    const status = bus.status(cfg.slug);
     let scoreLine = "";
+    let memoryContext = "";
     let recentLogs = "";
     try {
       const rel = await readRelationship(cfg.slug);
       scoreLine = ` score=${JSON.stringify(rel.score)}`;
     } catch { /* ignore */ }
     try {
+      const [persona, speech, communication, boundaries, longTerm, facts, uncertain, timeline, openLoops, promises] = await Promise.all([
+        readMd(cfg.slug, "persona.md"),
+        readMd(cfg.slug, "speech.md"),
+        readMd(cfg.slug, "communication.md"),
+        readMd(cfg.slug, "boundaries.md"),
+        readMd(cfg.slug, "memory/long-term.md"),
+        readMd(cfg.slug, "memory/facts.md"),
+        readMd(cfg.slug, "memory/uncertain.md"),
+        readMd(cfg.slug, "relationship/timeline.md"),
+        readMd(cfg.slug, "time/open-loops.md"),
+        readMd(cfg.slug, "time/promises.md")
+      ]);
+      memoryContext = renderAssistantMemoryContext({
+        persona,
+        speech,
+        communication,
+        boundaries,
+        longTerm,
+        facts,
+        uncertain,
+        timeline,
+        openLoops,
+        promises
+      });
+    } catch { /* ignore */ }
+    try {
       const buf = bus.recentLogs(cfg.slug, 25);
       recentLogs = buf.map(e => `[${e.type}] ${e.text ?? ""}`).join("\n");
     } catch { /* ignore */ }
 
-    const ctxPrompt = `Текущий профиль: ${cfg.name}, ${cfg.age}, стадия "${stage.label}" (${cfg.stage}), privacy=${cfg.privacy ?? "owner-only"}, ignoreTendency=${cfg.ignoreTendency ?? 35}, llm=${cfg.llm.presetId}/${cfg.llm.model}, telegram=${cfg.mode ?? "bot"}.${scoreLine}` +
-      (recentLogs ? `\n\nПоследние события runtime'а (для контекста):\n${recentLogs.slice(-1500)}` : "");
+    const runtimeContext = [
+      `Текущий профиль: ${cfg.name}, ${cfg.age}, ${cfg.nationality}, tz=${cfg.tz}`,
+      `slug=${cfg.slug}, runtime=${status.state}${status.lastError ? `, lastError=${status.lastError}` : ""}`,
+      `стадия "${stage.label}" (${cfg.stage}), ${stage.description}`,
+      `stage defaults: ignoreChance=${stage.defaults.ignoreChance}, replyDelaySec=${stage.defaults.replyDelaySec[0]}-${stage.defaults.replyDelaySec[1]}`,
+      `privacy=${cfg.privacy ?? "owner-only"}, ownerId=${cfg.ownerId ?? "—"}, ignoreTendency=${cfg.ignoreTendency ?? 35}`,
+      `sleep=${cfg.sleepFrom}:00-${cfg.sleepTo}:00, nightWakeChance=${cfg.nightWakeChance}`,
+      `communication=${cfg.communication ? JSON.stringify(cfg.communication) : "default"}, vibe=${cfg.vibe ?? "—"}`,
+      `llm=${cfg.llm.presetId}/${cfg.llm.model} (${cfg.llm.proto}), telegram=${cfg.mode ?? "bot"}, useWSS=${cfg.telegram.useWSS ?? true}`,
+      `busySchedule=${cfg.busySchedule?.length ? JSON.stringify(cfg.busySchedule).slice(0, 1000) : "[]"}`,
+      scoreLine.trim()
+    ].filter(Boolean).join("\n");
+
+    const ctxPrompt = [
+      `Контекст активного профиля:\n${runtimeContext}`,
+      memoryContext,
+      recentLogs ? `Последние события runtime'а:\n${recentLogs.slice(-2500)}` : ""
+    ].filter(Boolean).join("\n\n");
 
     const llm = makeLLM(cfg.llm);
     const messages = [
@@ -201,11 +302,13 @@ async function applyTool(cfg: ProfileConfig, call: AssistantToolCall): Promise<{
       const stage = String(call.args?.stage ?? "") as StageId;
       const found = STAGE_PRESETS.find(s => s.id === stage);
       if (!found) return { changed: false, message: `unknown stage: ${stage}. Доступные: ${STAGE_PRESETS.map(s => s.id).join(", ")}` };
+      const prevStage = cfg.stage;
       cfg.stage = stage;
       try {
         const rel = await readRelationship(cfg.slug);
         await writeRelationship(cfg.slug, { ...rel, stage });
       } catch { /* ignore */ }
+      await maybeAdvanceRelationshipTimeline(cfg, prevStage, stage);
       return { changed: true, message: `stage = ${stage} (${found.label})` };
     }
 
@@ -327,6 +430,35 @@ ${preset.description}
     default:
       return { changed: false, message: `unknown tool: ${call.tool}` };
   }
+}
+
+function renderAssistantMemoryContext(parts: Record<string, string>): string {
+  const sections = [
+    ["persona.md", parts.persona],
+    ["speech.md", parts.speech],
+    ["communication.md", parts.communication],
+    ["boundaries.md", parts.boundaries],
+    ["memory/facts.md", parts.facts],
+    ["memory/uncertain.md", parts.uncertain],
+    ["memory/long-term.md", parts.longTerm],
+    ["relationship/timeline.md", parts.timeline],
+    ["time/open-loops.md", parts.openLoops],
+    ["time/promises.md", parts.promises]
+  ]
+    .map(([name, text]) => renderContextSection(name, text))
+    .filter(Boolean);
+  return sections.length ? `Память и файлы профиля:\n${sections.join("\n\n")}` : "";
+}
+
+function renderContextSection(name: string, text: string): string {
+  const clean = text.trim();
+  if (!clean) return "";
+  return `## ${name}\n${tail(clean, 1400)}`;
+}
+
+function tail(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return text.slice(-limit);
 }
 
 function setNested(obj: Record<string, unknown>, path: string, value: unknown): void {
