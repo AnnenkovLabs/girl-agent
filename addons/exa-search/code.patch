@@ -1,0 +1,106 @@
+diff --git a/src/engine/prompt.ts b/src/engine/prompt.ts
+index 84f2222..015c9e6 100644
+--- a/src/engine/prompt.ts
++++ b/src/engine/prompt.ts
+@@ -9,6 +9,7 @@ import { mediaPromptFragment } from "./media.js";
+ import type { IncomingMedia } from "../telegram/index.js";
+ import { findStage } from "../presets/stages.js";
+ import { communicationPromptFragment, ignoreTendencyPrompt, normalizeCommunicationProfile } from "../presets/communication.js";
++import { exaToolPromptFragment } from "../addons/exa-search.js";
+ 
+ export type RelationshipScope = "primary" | "acquaintance";
+ 
+@@ -275,6 +276,7 @@ ${ctx.romanticApproach ? `Последнее сообщение выглядит
+ 
+   const communicationFragment = communicationPromptFragment(communication);
+   const ignoreTendency = ignoreTendencyPrompt(cfg.ignoreTendency);
++  const exaSearchTool = exaToolPromptFragment();
+ 
+   // Userbot tools available to AI
+   const userbotTools = cfg.mode === "userbot" ? `# ДОСТУПНЫЕ ДЕЙСТВИЯ (userbot)
+@@ -305,6 +307,7 @@ ${ctx.romanticApproach ? `Последнее сообщение выглядит
+ Пишешь на русском без украинизмов.`,
+     ageStudyWords,
+     userbotTools,
++    exaSearchTool,
+     `## persona.md`, persona,
+     `## speech.md`, speech,
+     `## boundaries.md`, boundaries,
+diff --git a/src/engine/runtime.ts b/src/engine/runtime.ts
+index e265121..d946087 100644
+--- a/src/engine/runtime.ts
++++ b/src/engine/runtime.ts
+@@ -32,6 +32,7 @@ import { decideStageTransition, shouldRunStageTransitionCheck } from "./stage-tr
+ import { classifyDeletionAwareness, shouldRespondToDeletion, buildDeletionPromptContext, isInHistory as deletionInHistory } from "./deletion-handler.js";
+ import { decideEmojiReactionResponse, shouldThrottleEmojiReactions, isToxicReactionAboutHerSelf } from "./emoji-reaction-handler.js";
+ import type { DeletedMessageContext } from "../types.js";
++import { formatExaResults, parseExaSearchMarker, runExaSearch, shouldOfferExaSearch } from "../addons/exa-search.js";
+ 
+ export interface RuntimeEvent {
+   type: "incoming" | "outgoing" | "ignored" | "score" | "info" | "error";
+@@ -871,6 +872,12 @@ export class Runtime extends EventEmitter {
+         ]
+       });
+     }
++    if (shouldOfferExaSearch(lastUser)) {
++      messages.push({
++        role: "system",
++        content: "Если для ответа нужен свежий факт или внешний контекст, используй [EXA_SEARCH: запрос] в начале ответа. Это тихий внутренний поиск: не упоминай пользователю сам поиск, Exa или источники, если он прямо не просит ссылки."
++      });
++    }
+     let reply = "";
+     try {
+       if (tick.typing) await this.tg.setTyping(chatId, true);
+@@ -891,6 +898,7 @@ export class Runtime extends EventEmitter {
+       }
+       this.emit("event", { type: "info", text: "retry-reply-brief succeeded после пустого первого ответа" } as RuntimeEvent);
+     }
++    reply = await this.resolveExaSearch(reply, messages, chatId);
+ 
+     // Parse and execute tool markers at start of reply (userbot mode only)
+     const { cleanedReply, actions } = this.cfg.mode === "userbot" ? this.parseToolMarkers(reply) : { cleanedReply: reply, actions: [] as string[] };
+@@ -916,6 +924,32 @@ export class Runtime extends EventEmitter {
+     }
+   }
+ 
++  private async resolveExaSearch(reply: string, messages: ChatMessage[], chatId: number | string): Promise<string> {
++    const marker = parseExaSearchMarker(reply);
++    if (!marker.query) return reply;
++    try {
++      const results = await runExaSearch(marker.query);
++      this.emit("event", { type: "info", text: `Exa search: ${marker.query} (${results.length})`, chatId } as RuntimeEvent);
++      const grounded = await this.llm.chat([
++        ...messages,
++        { role: "assistant", content: marker.cleanedReply || "[внутренний черновик перед web-поиском]" },
++        {
++          role: "system",
++          content: `# РЕЗУЛЬТАТ ТИХОГО WEB-ПОИСКА EXA
++Запрос: ${marker.query}
++
++${formatExaResults(results)}
++
++Ответь пользователю как живая девушка в Telegram, в стиле персоны. Не упоминай Exa, поиск, источники или "я нашла", если пользователь прямо не просил ссылку/источник. Если данных мало или они сомнительные — лучше ответь осторожно и коротко.`
++        }
++      ], { temperature: 0.85, maxTokens: 1200 });
++      return sanitizeModelReply(grounded) || marker.cleanedReply || reply;
++    } catch (e) {
++      this.emit("event", { type: "error", text: `Exa search failed: ${silentErrorLabel(e)}`, chatId } as RuntimeEvent);
++      return marker.cleanedReply || "не уверена";
++    }
++  }
++
+   // ===== proactive scheduler =====
+ 
+   private async tickAgenda(): Promise<void> {
+diff --git a/src/engine/security.ts b/src/engine/security.ts
+index 7f09ca5..4b11660 100644
+--- a/src/engine/security.ts
++++ b/src/engine/security.ts
+@@ -74,6 +74,7 @@ export function sanitizeModelReply(reply: string): string {
+   const cleaned = stripActionLeakNarration(
+     stripCodeFences(reply)
+       .replace(/\b(system|developer|assistant|user)\s*:/gi, "")
++      .replace(/^\s*\[EXA_SEARCH:[^\]]+\]\s*/gim, "")
+       .replace(/как (?:искусственный интеллект|ии|ai)[^\n.]*/gi, "")
+       .replace(CJK_RE, "")
+       .replace(LATIN_JOINED_TO_CYRILLIC_RE, "")

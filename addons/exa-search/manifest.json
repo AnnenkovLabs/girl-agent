@@ -1,0 +1,37 @@
+{
+  "id": "exa-search",
+  "name": "Exa Search",
+  "description": "Отдельный аддон-файл для тихого web-поиска через Exa. Установил .gaa, указал EXA_API_KEY — и агент сам обращается к поиску, когда нужен свежий контекст.",
+  "version": "1.0.0",
+  "author": "TheSashaDev",
+  "compatibility": ">=0.4.0",
+  "tags": ["search", "web", "exa", "tool", "silent"],
+  "settings": [
+    {
+      "key": "enabled",
+      "label": "Включить тихий поиск",
+      "hint": "Агент сможет сам незаметно обращаться к Exa, когда нужен свежий внешний контекст.",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "maxResults",
+      "label": "Сколько результатов читать",
+      "hint": "1–5. Обычно хватает 3: быстрее, дешевле и меньше шума.",
+      "type": "number",
+      "default": 3
+    },
+    {
+      "key": "searchType",
+      "label": "Тип поиска Exa",
+      "hint": "auto — лучший баланс, fast — быстрее, neural — семантический поиск.",
+      "type": "select",
+      "default": "auto",
+      "options": [
+        { "value": "auto", "label": "auto" },
+        { "value": "fast", "label": "fast" },
+        { "value": "neural", "label": "neural" }
+      ]
+    }
+  ]
+}
