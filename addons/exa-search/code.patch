@@ -1,5 +1,5 @@
 diff --git a/src/engine/prompt.ts b/src/engine/prompt.ts
-index 84f2222..015c9e6 100644
+index 84f2222..5189e1b 100644
 --- a/src/engine/prompt.ts
 +++ b/src/engine/prompt.ts
 @@ -9,6 +9,7 @@ import { mediaPromptFragment } from "./media.js";
@@ -14,7 +14,7 @@ index 84f2222..015c9e6 100644
  
    const communicationFragment = communicationPromptFragment(communication);
    const ignoreTendency = ignoreTendencyPrompt(cfg.ignoreTendency);
-+  const exaSearchTool = exaToolPromptFragment();
++  const exaSearchTool = await exaToolPromptFragment();
  
    // Userbot tools available to AI
    const userbotTools = cfg.mode === "userbot" ? `# ДОСТУПНЫЕ ДЕЙСТВИЯ (userbot)
@@ -27,7 +27,7 @@ index 84f2222..015c9e6 100644
      `## speech.md`, speech,
      `## boundaries.md`, boundaries,
 diff --git a/src/engine/runtime.ts b/src/engine/runtime.ts
-index e265121..d946087 100644
+index e265121..426bd59 100644
 --- a/src/engine/runtime.ts
 +++ b/src/engine/runtime.ts
 @@ -32,6 +32,7 @@ import { decideStageTransition, shouldRunStageTransitionCheck } from "./stage-tr
@@ -42,7 +42,7 @@ index e265121..d946087 100644
          ]
        });
      }
-+    if (shouldOfferExaSearch(lastUser)) {
++    if (await shouldOfferExaSearch(lastUser)) {
 +      messages.push({
 +        role: "system",
 +        content: "Если для ответа нужен свежий факт или внешний контекст, используй [EXA_SEARCH: запрос] в начале ответа. Это тихий внутренний поиск: не упоминай пользователю сам поиск, Exa или источники, если он прямо не просит ссылки."

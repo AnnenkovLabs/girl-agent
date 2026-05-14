@@ -1,12 +1,20 @@
 {
   "id": "exa-search",
   "name": "Exa Search",
-  "description": "Отдельный аддон-файл для тихого web-поиска через Exa. Установил .gaa, указал EXA_API_KEY — и агент сам обращается к поиску, когда нужен свежий контекст.",
+  "description": "Отдельный аддон-файл для тихого web-поиска через Exa. Установил .gaa, вставил API key в настройки — и агент сам обращается к поиску, когда нужен свежий контекст.",
   "version": "1.0.0",
   "author": "TheSashaDev",
   "compatibility": ">=0.4.0",
   "tags": ["search", "web", "exa", "tool", "silent"],
   "settings": [
+    {
+      "key": "apiKey",
+      "label": "Exa API key",
+      "hint": "Вставь ключ из dashboard.exa.ai/api-keys. Если оставить пустым, будет использован EXA_API_KEY из окружения.",
+      "type": "string",
+      "default": "",
+      "required": false
+    },
     {
       "key": "enabled",
       "label": "Включить тихий поиск",

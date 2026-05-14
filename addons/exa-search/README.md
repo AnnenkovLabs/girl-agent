@@ -12,17 +12,15 @@
 ## Как включить
 
 1. Получи ключ Exa: https://dashboard.exa.ai/api-keys
-2. Запусти girl-agent с переменной окружения:
+2. В WebUI открой Addons и установи `exa-search.gaa`.
+3. Открой настройки аддона, вставь ключ в поле `Exa API key` и нажми «Сохранить».
 
-```bash
-EXA_API_KEY=... npx girl-agent
-```
-
-3. В WebUI открой Addons и установи `exa-search.gaa`.
+Если поле пустое, аддон попробует взять ключ из `EXA_API_KEY` окружения.
 
 ## Настройки
 
 - `enabled` — включает/выключает тихий поиск.
+- `apiKey` — Exa API key прямо в настройках WebUI.
 - `maxResults` — сколько результатов читать за один поиск, от 1 до 5.
 - `searchType` — `auto`, `fast` или `neural`.
 
