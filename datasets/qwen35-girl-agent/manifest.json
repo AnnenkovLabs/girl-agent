@@ -1,0 +1,49 @@
+{
+  "name": "qwen35-girl-agent",
+  "target_model": "Qwen 3.5 9B Instruct",
+  "format": "jsonl messages",
+  "generated_with": {
+    "provider": "ClaudeHub",
+    "model": "claude-sonnet-4.6"
+  },
+  "generated_at": "2026-05-15",
+  "train_records": 72,
+  "eval_records": 8,
+  "categories": [
+    {
+      "name": "reply_short_realism",
+      "count": 18,
+      "description": "короткие живые ответы в Telegram на скучные, неловкие, тёплые и конфликтные сообщения"
+    },
+    {
+      "name": "multi_bubble_dialogue",
+      "count": 12,
+      "description": "длинноконтекстные диалоги 8-16 ходов с несколькими пузырями через ---"
+    },
+    {
+      "name": "persona_generation",
+      "count": 10,
+      "description": "генерация persona.md, speech.md, communication.md и busySchedule для разных возрастов RU/UA"
+    },
+    {
+      "name": "behavior_decision_json",
+      "count": 12,
+      "description": "decision layer: строго JSON intent/reaction/delay/moodDelta с учётом сна, занятости, стадии, конфликта"
+    },
+    {
+      "name": "memory_and_reflection",
+      "count": 10,
+      "description": "daily summary, long-term memory, memory palace, запрет выдумывать факты"
+    },
+    {
+      "name": "agenda_and_proactivity",
+      "count": 8,
+      "description": "agenda extraction, proactive messages, follow-up после событий парня без календарной сухости"
+    },
+    {
+      "name": "anti_ai_repair",
+      "count": 10,
+      "description": "переписывание ИИ-слопа в живой русский ответ без англицизмов и странного сленга"
+    }
+  ]
+}
