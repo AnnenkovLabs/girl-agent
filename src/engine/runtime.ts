@@ -857,7 +857,7 @@ export class Runtime extends EventEmitter {
       ? "\nЭто сторонний личный чат, не основной парень. Не используй память/отношения основного парня. Если заход романтический — поставь границу. Если вопрос обычный — ответь по легенде коротко."
       : "";
     const messages: ChatMessage[] = [
-      { role: "system" as const, content: sys + `\n\n# Подсказка от behavior-layer\nintent=${tick.intent}\nкол-во пузырей: ${tick.bubbles}${presenceHint ? `\nдоступность: ${presenceHint}` : ""}\n${tick.intent === "short" ? "Отвечай односложно: 'ок', 'ясно', 'и?', 'ну ок'. Без объяснений." : tick.bubbles > 1 ? "Разбей ответ на пузыри СТРОГО строкой '---' (три дефиса на отдельной строке) между ними. КАЖДЫЙ пузырь — отдельное сообщение в тг. ЗАПРЕЩЕНО раскидывать одно сообщение на несколько строк через перенос строки без '---' — в тг это выглядит как одно сообщение в столбик, что палит ИИ. Правильно:\\n\\nпривет\\n---\\nкак сам\\n\\nНеправильно:\\n\\nпривет\\nкак сам" : "Один короткий ответ, без '---'."}${scopeHint}` },
+      { role: "system" as const, content: sys + `\n\n# Подсказка от behavior-layer\nintent=${tick.intent}\nкол-во пузырей: ${tick.bubbles}${presenceHint ? `\nдоступность: ${presenceHint}` : ""}\n${tick.intent === "short" ? "Отвечай односложно: 'ок', 'ясно', 'и?', 'ну ок'. Без объяснений." : tick.bubbles > 1 ? "Разбей ответ на пузыри СТРОГО строкой '---' (три дефиса на отдельной строке) между ними. КАЖДЫЙ пузырь — отдельное сообщение в тг. ЗАПРЕЩЕНО раскидывать одно сообщение на несколько строк через перенос строки без '---' — в тг это выглядит как одно сообщение в столбик, что палит ИИ. Правильно:\\n\\nпривет\\n---\\nкак сам\\n\\nНеправильно:\\n\\nпривет\\nкак сам\n\nКРИТИЧНО: каждый пузырь — НОВАЯ мысль. ЗАПРЕЩЕНО повторять или перефразировать в следующем пузыре то же, что сказала в предыдущем. Если уже сказала 'по поводу завтра' — следующий пузырь НЕ должен начинаться с 'по поводу завтра ещё...'. Не цитируй и не расширяй свои предыдущие пузыри. Финальный ответ выдай ОДИН раз, не переписывай его другими словами." : "Один короткий ответ, без '---'."}${scopeHint}` },
       ...hist.slice(-60).map(t => ({ role: t.role, content: t.content }))
     ];
     const image = imagePartFromMedia(incoming?.media);
@@ -1724,23 +1724,70 @@ function normalizeForDuplicate(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").replace(/[.!?…)\]]+$/g, "").trim();
 }
 
+function bubbleTokens(text: string): string[] {
+  return normalizeForDuplicate(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(t => t.length > 1);
+}
+
+/**
+ * Считает что `shorter` — это перефраз/подмножество `longer`.
+ * Срабатывает если:
+ * - короче по длине И
+ * - либо строгая подстрока, либо ≥75% значимых слов короткого встречаются в длинном.
+ *
+ * Нужно для слабых LLM (Ollama gemma, маленькие GPT/Claude), которые любят
+ * сказать "по поводу завтра" а в следующем пузыре "по поводу завтра еще в силе...".
+ */
+function bubbleIsContainedIn(shorter: string, longer: string): boolean {
+  const a = normalizeForDuplicate(shorter);
+  const b = normalizeForDuplicate(longer);
+  if (!a || !b || a === b) return false;
+  if (a.length >= b.length) return false;
+  if (b.includes(a)) return true;
+  const shortTokens = bubbleTokens(shorter);
+  if (shortTokens.length < 2) return false;
+  const longSet = new Set(bubbleTokens(longer));
+  const overlap = shortTokens.filter(t => longSet.has(t)).length;
+  return overlap / shortTokens.length >= 0.75;
+}
+
 function isDuplicateAssistantBubble(hist: ConversationTurn[], text: string): boolean {
   const normalized = normalizeForDuplicate(text);
   if (!normalized) return true;
-  return hist
-    .slice(-8)
-    .filter(t => t.role === "assistant")
-    .some(t => normalizeForDuplicate(t.content) === normalized);
+  const recent = hist.slice(-8).filter(t => t.role === "assistant");
+  return recent.some(t => {
+    const histNorm = normalizeForDuplicate(t.content);
+    if (histNorm === normalized) return true;
+    // если новый пузырь — перефраз чего-то недавно сказанного, или наоборот
+    return bubbleIsContainedIn(text, t.content) || bubbleIsContainedIn(t.content, text);
+  });
 }
 
+/**
+ * Убирает пузыри, которые являются точным повтором, подстрокой, или близким перефразом
+ * других пузырей в той же серии. Сохраняет более длинный (информативный) вариант,
+ * в порядке появления.
+ */
 function dedupeBubbles(bubbles: string[]): string[] {
-  const seen = new Set<string>();
-  return bubbles.filter(bubble => {
+  const kept: string[] = [];
+  for (const bubble of bubbles) {
     const normalized = normalizeForDuplicate(bubble);
-    if (!normalized || seen.has(normalized)) return false;
-    seen.add(normalized);
-    return true;
-  });
+    if (!normalized) continue;
+    // точный дубль уже в наборе
+    if (kept.some(k => normalizeForDuplicate(k) === normalized)) continue;
+    // текущий — подмножество/перефраз чего-то уже сохранённого (более длинного) — пропускаем
+    if (kept.some(k => bubbleIsContainedIn(bubble, k))) continue;
+    // убираем уже сохранённые, которые являются подмножеством текущего (более длинного)
+    for (let i = kept.length - 1; i >= 0; i--) {
+      if (bubbleIsContainedIn(kept[i]!, bubble)) {
+        kept.splice(i, 1);
+      }
+    }
+    kept.push(bubble);
+  }
+  return kept;
 }
 
 /**
