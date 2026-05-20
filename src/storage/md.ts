@@ -643,8 +643,11 @@ export function subscribeMandate(
     }
   };
 
-  // Гарантируем существование директории профиля, иначе fs.watch упадёт.
-  fs.mkdir(path.dirname(file), { recursive: true }).catch(() => { /* ignore */ });
+  // Гарантируем существование директории профиля синхронно, иначе fs.watch
+  // упадёт с ENOENT на свежем профиле без папки `data/<slug>/`.
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+  } catch { /* ignore */ }
 
   const watcher = fsWatch(path.dirname(file), { persistent: false }, (_event, name) => {
     if (name === path.basename(file)) {
