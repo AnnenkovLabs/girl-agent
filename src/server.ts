@@ -19,7 +19,7 @@ import { parseTelegramProxyInput } from "./telegram/proxy-parse.js";
 /**
  * Server / automation entrypoint.
  *
- * The interactive setup happens in the WebUI (default `npx girl-agent`).
+ * The interactive setup happens in the WebUI (default `npx manager-agent`).
  * This module is for non-TTY automation only:
  *   --config <file>        load profile from json, run/save it
  *   --print-config         print json template
@@ -50,20 +50,20 @@ interface ServerArgs {
 }
 
 const SERVER_HELP = `
-girl-agent server — automation / ops mode (no TTY required)
+manager-agent server — automation / ops mode (no TTY required)
 
 usage:
-  girl-agent server --print-config > bot.json
+  manager-agent server --print-config > bot.json
   # отредактируй bot.json
-  girl-agent server --config bot.json --headless
+  manager-agent server --config bot.json --headless
 
-  girl-agent server --list
-  girl-agent server --profile=<slug> --headless
-  girl-agent server --profile=<slug> --set-model --api-preset=<id> --model=<model> [--api-key=<key>]
-  girl-agent server --profile=<slug> --delete-profile --yes
+  manager-agent server --list
+  manager-agent server --profile=<slug> --headless
+  manager-agent server --profile=<slug> --set-model --api-preset=<id> --model=<model> [--api-key=<key>]
+  manager-agent server --profile=<slug> --delete-profile --yes
 
-  girl-agent server --print-systemd > /etc/systemd/system/girl-agent.service
-  girl-agent server --print-docker
+  manager-agent server --print-systemd > /etc/systemd/system/manager-agent.service
+  manager-agent server --print-docker
 
 env-vars (для CI / docker secrets / k8s):
   MANAGER_AGENT_DATA           путь к профилям (default: ./data)
@@ -74,7 +74,7 @@ env-vars (для CI / docker secrets / k8s):
   MANAGER_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET, _IGNORE_TENDENCY, _OWNER_ID
 
 для интерактивной первичной настройки запускай без флагов —
-откроется WebUI на http://localhost:3000 (в docker используй -p 3000:3000).
+откроется WebUI на http://localhost:3100 (в docker используй -p 3100:3100).
 `;
 
 function parseServerArgs(argv: Record<string, unknown>): ServerArgs {
@@ -327,7 +327,7 @@ function validateConfig(raw: unknown): ProfileConfig {
   if (!c.llm?.model) errs.push("llm.model");
   if (errs.length) {
     process.stderr.write(`[server] конфиг невалиден, недостающие поля:\n  - ${errs.join("\n  - ")}\n`);
-    process.stderr.write(`[server] см. шаблон: girl-agent server --print-config\n`);
+    process.stderr.write(`[server] см. шаблон: manager-agent server --print-config\n`);
     process.exit(1);
   }
   const filled: ProfileConfig = {
@@ -400,13 +400,13 @@ function buildConfigTemplate(): string {
 
 function buildSystemdUnit(): string {
   const home = os.homedir();
-  return `# /etc/systemd/system/girl-agent.service
-# install: sudo cp this.service /etc/systemd/system/girl-agent.service
+  return `# /etc/systemd/system/manager-agent.service
+# install: sudo cp this.service /etc/systemd/system/manager-agent.service
 #          sudo systemctl daemon-reload
-#          sudo systemctl enable --now girl-agent
+#          sudo systemctl enable --now manager-agent
 
 [Unit]
-Description=girl-agent (Telegram AI girl)
+Description=manager-agent (Telegram AI manager)
 After=network-online.target
 Wants=network-online.target
 
@@ -414,7 +414,7 @@ Wants=network-online.target
 Type=simple
 User=%i
 WorkingDirectory=${home}
-ExecStart=${home}/.local/bin/girl-agent server --config ${home}/.config/girl-agent/bot.json --headless
+ExecStart=${home}/.local/bin/manager-agent server --config ${home}/.config/manager-agent/bot.json --headless
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -434,21 +434,21 @@ WantedBy=multi-user.target
 function buildDockerArtifacts(): string {
   return `# === одной командой ===
 docker run -it --rm \\
-  -v girl-agent-data:/data \\
+  -v manager-agent-data:/data \\
   -e MANAGER_AGENT_DATA=/data \\
-  ghcr.io/thesashadev/girl-agent:latest
+  ghcr.io/shxpe0x/manager-agent:latest
 
 # === headless с готовым конфигом ===
-docker run -d --name girl-agent --restart=unless-stopped \\
-  -v girl-agent-data:/data \\
+docker run -d --name manager-agent --restart=unless-stopped \\
+  -v manager-agent-data:/data \\
   -v "$PWD/bot.json:/config/bot.json:ro" \\
   -e MANAGER_AGENT_DATA=/data \\
-  ghcr.io/thesashadev/girl-agent:latest \\
+  ghcr.io/shxpe0x/manager-agent:latest \\
   server --config /config/bot.json --headless
 
 # === только env vars (без файла) ===
-docker run -d --name girl-agent --restart=unless-stopped \\
-  -v girl-agent-data:/data \\
+docker run -d --name manager-agent --restart=unless-stopped \\
+  -v manager-agent-data:/data \\
   -e MANAGER_AGENT_DATA=/data \\
   -e MANAGER_AGENT_MODE=bot \\
   -e MANAGER_AGENT_TOKEN=... \\
@@ -456,24 +456,24 @@ docker run -d --name girl-agent --restart=unless-stopped \\
   -e MANAGER_AGENT_API_KEY=... \\
   -e MANAGER_AGENT_NAME='Аня' \\
   -e MANAGER_AGENT_AGE=22 \\
-  ghcr.io/thesashadev/girl-agent:latest \\
+  ghcr.io/shxpe0x/manager-agent:latest \\
   server --headless
 
 # === docker-compose.yml ===
 # version: "3.9"
 # services:
-#   girl-agent:
-#     image: ghcr.io/thesashadev/girl-agent:latest
-#     # interactive WebUI: command: [] and ports: ["3000:3000"]
+#   manager-agent:
+#     image: ghcr.io/shxpe0x/manager-agent:latest
+#     # interactive WebUI: command: [] and ports: ["3100:3100"]
 #     command: ["server", "--config", "/config/bot.json", "--headless"]
 #     environment:
 #       MANAGER_AGENT_DATA: /data
 #       MANAGER_AGENT_HOST: 0.0.0.0
 #     volumes:
-#       - girl-agent-data:/data
+#       - manager-agent-data:/data
 #       - ./bot.json:/config/bot.json:ro
 #     restart: unless-stopped
 # volumes:
-#   girl-agent-data:
+#   manager-agent-data:
 `;
 }
