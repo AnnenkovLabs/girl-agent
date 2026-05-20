@@ -7,7 +7,7 @@ import {
 import type { ProfileConfig } from "../../types.js";
 import { parseTelegramProxyInput } from "../../telegram/proxy-parse.js";
 import { bus } from "../runtime-bus.js";
-import { findStage } from "../../engine/legacy-stage.js";
+import { legacyStage } from "../../engine/legacy-stage.js";
 import { ensurePersonaPack, generatePersonaPack } from "../../engine/persona-gen.js";
 import { makeLLM } from "../../llm/index.js";
 import { applyLLMUpdate, describeLLM } from "../../config/llm-update.js";
@@ -195,7 +195,7 @@ export function registerProfileRoutes(r: Router): void {
     const cfg = await readConfig(slug);
     if (!cfg) throw new HttpError(404, "profile not found");
     const rel = await readRelationship(slug);
-    const stage = findStage(rel.stage);
+    const stage = legacyStage(rel.stage);
     return { stage: { id: stage.id, num: stage.num, label: stage.label }, score: rel.score };
   });
 

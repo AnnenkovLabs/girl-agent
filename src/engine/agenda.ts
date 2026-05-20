@@ -1,7 +1,7 @@
 import type { ProfileConfig, Weekday } from "../types.js";
 import type { LLMClient } from "../llm/index.js";
 import { readAgenda, writeAgenda, readMd, writeMd, readRelationship, type AgendaItem } from "../storage/md.js";
-import { findStage } from "./legacy-stage.js";
+import { legacyStage } from "./legacy-stage.js";
 import { communicationDecisionState, normalizeCommunicationProfile } from "../presets/communication.js";
 import type { DailyLife } from "./daily-life.js";
 import type { ConflictState } from "./conflict.js";
@@ -250,7 +250,7 @@ export async function extractAgendaUpdates(
   incoming: string,
   chatId: string | number
 ): Promise<{ created: number; updated: number; cancelled: number }> {
-  const stage = findStage(cfg.stage);
+  const stage = legacyStage(cfg.stage);
   const communication = normalizeCommunicationProfile(cfg);
   // Агенда не для холодных стадий — экономим LLM-вызовы.
   if ((cfg.stage === "tg-given-cold" && communication.initiative !== "high") || (cfg.stage === "met-irl-got-tg" && communication.initiative === "low")) {
@@ -358,7 +358,7 @@ export async function ensureAutonomousAgenda(
     return { created: 0 };
   }
 
-  const stage = findStage(cfg.stage);
+  const stage = legacyStage(cfg.stage);
   const rel = await readRelationship(cfg.slug);
   const persona = (await readMd(cfg.slug, "persona.md")).slice(0, 900);
   const speech = (await readMd(cfg.slug, "speech.md")).slice(0, 600);

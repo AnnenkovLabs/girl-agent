@@ -7,13 +7,21 @@ import { applyMoodDelta, maybeReflect } from "./reflect.js";
 import {
   appendSessionLog, appendSharedMemory, readRelationship, writeRelationship, writeConfig, writeMd,
   readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId, profileDir,
-  subscribeConfig, type ConfigSubscription, type AgendaItem
+  subscribeConfig, type ConfigSubscription, type AgendaItem,
+  loadTickets, saveTickets
 } from "../storage/md.js";
 import { evaluateGate, type GateContact } from "./gate.js";
 import { upsertOnIncoming as upsertContactOnIncoming, isBlocked as isContactBlocked } from "./contacts.js";
 import { evaluateAfterHours, snapshotAfterHours } from "./after-hours.js";
 import { saveContact, loadContact } from "../storage/md.js";
-import { findStage } from "./legacy-stage.js";
+import { parseBossReply, type OpenTicketSummary } from "./boss-reply-parser.js";
+import {
+  composeClientReplyFromBoss, transitionTicket,
+  createTicket, summarizeForBoss
+} from "./escalation.js";
+import { loadMandate as loadMandateFile, nextTicketId } from "../storage/md.js";
+import { MandateRuntime } from "./mandate.js";
+import { legacyStage } from "./legacy-stage.js";
 import type { LegacyStageId as StageId } from "./legacy-stage.js";
 import { communicationProfileLabel, normalizeCommunicationProfile } from "../presets/communication.js";
 import { findPreset } from "../presets/llm.js";
@@ -122,6 +130,13 @@ export class Runtime extends EventEmitter {
    */
   private digestHandle?: ScheduleDigestHandle;
   /**
+   * Per-profile runtime для mandate-классификатора (Task 4.3 manager-mode).
+   * Создаётся в `start()` и закрывается в `stop()`. Используется в
+   * `handleClientMessage` для выбора одного из решений
+   * answer-self / escalate / decline / ignore (Task 4.12b, Req 4 + 13).
+   */
+  private mandateRuntime?: MandateRuntime;
+  /**
    * Журнал моментов отправки агентом ответа клиенту в каждый чат, для
    * подсчёта ответов в окне 24 часа при `gateLevel=gated` (Req 17.4-17.5).
    * Хранятся unix-ms; чистка происходит при чтении.
@@ -142,6 +157,13 @@ export class Runtime extends EventEmitter {
     if (this.tg.getSelf) this.tgSelf = this.tg.getSelf();
     this.emit("event", { type: "info", text: `Telegram ${this.cfg.mode} запущен. Профиль: ${this.cfg.slug} | presence: ${this.presenceProfile.pattern} | communication: ${communicationProfileLabel(normalizeCommunicationProfile(this.cfg))}` } as RuntimeEvent);
     this.lastStage = this.cfg.stage;
+
+    // Mandate runtime per-profile (Task 4.3 + 4.12b manager-mode). Подгружает
+    // `mandate.md` и держит in-memory кеш с hot-reload через `subscribeMandate`.
+    this.mandateRuntime = new MandateRuntime(this.cfg.slug, this.llm);
+    await this.mandateRuntime.start().catch(e =>
+      this.emit("event", { type: "error", text: "mandate start: " + (e as Error).message } as RuntimeEvent)
+    );
 
     // Пред-загружаем daily-life (в фоне, не блокируем старт)
     this.refreshDailyLife().catch(() => {});
@@ -217,6 +239,8 @@ export class Runtime extends EventEmitter {
     this.configSubscription = undefined;
     this.digestHandle?.stop();
     this.digestHandle = undefined;
+    this.mandateRuntime?.stop();
+    this.mandateRuntime = undefined;
     try {
       const made = await withTimeout(closeCurrentSession(this.llm, this.cfg), 3500);
       if (made) this.emit("event", { type: "info", text: "daily summary обновлена" } as RuntimeEvent);
@@ -309,28 +333,6 @@ export class Runtime extends EventEmitter {
     this.emit("event", { type: "info", text: `primary owner закреплён: ${fromId}` } as RuntimeEvent);
   }
 
-  private async switchPrimaryAfterDumped(fromId: number): Promise<void> {
-    if (!this.cfg.ownerId || this.cfg.ownerId === fromId || this.cfg.stage !== "dumped") return;
-    const oldOwnerId = this.cfg.ownerId;
-    const oldMemory = await readMd(this.cfg.slug, "memory/long-term.md");
-    if (oldMemory.trim()) await writeMd(this.cfg.slug, `memory/ex-${oldOwnerId}-long-term.md`, oldMemory);
-    this.cfg.ownerId = fromId;
-    this.cfg.stage = "tg-given-cold";
-    await writeConfig(this.cfg);
-    await writeRelationship(this.cfg.slug, {
-      stage: this.cfg.stage,
-      score: { interest: 0, trust: 0, attraction: 0, annoyance: 0, cringe: 0 },
-      notes: `stage: ${this.cfg.stage}\n<!--score:{"interest":0,"trust":0,"attraction":0,"annoyance":0,"cringe":0}-->\n`
-    });
-    await writeMd(this.cfg.slug, "memory/long-term.md", "");
-    await clearConflict(this.cfg.slug);
-    this.histories.clear();
-    this.lastUserMsgTs.clear();
-    this.lastHerReplyTs.clear();
-    this.exchangeCount.clear();
-    this.emit("event", { type: "info", text: `primary owner сменён после dumped: ${oldOwnerId} → ${fromId}` } as RuntimeEvent);
-  }
-
   private async historyFor(key: string, fromId?: number, restore = false): Promise<ConversationTurn[]> {
     const existing = this.histories.get(key);
     if (existing) return existing;
@@ -350,10 +352,6 @@ export class Runtime extends EventEmitter {
     if (userTurns) this.exchangeCount.set(key, userTurns);
   }
 
-  private isRomanticApproach(text: string): boolean {
-    return /\b(люблю|нравишься|встречаться|отношения|парень|девушка|свидани|поцел|обним|секс|интим|флирт|краш|давай ко мне|будешь моей)\b/i.test(text);
-  }
-
   private acquaintanceTick(romanticApproach: boolean): RuntimeTick {
     return {
       shouldReply: true,
@@ -371,14 +369,6 @@ export class Runtime extends EventEmitter {
 
   private actionAvailable(name: keyof TgAdapter): boolean {
     return typeof this.tg?.[name] === "function";
-  }
-
-  private async maybeBlockAfterBoundary(chatId: number | string, text: string, romanticApproach: boolean): Promise<boolean> {
-    if (!this.primaryIsCommitted() || !romanticApproach || !this.userbotActionAvailable("blockContact")) return false;
-    if (!/\b(секс|интим|голая|голые|скинь|фото|нюд|приеду|адрес|будешь моей|шлюх|сука)\b/i.test(text)) return false;
-    await this.tg.blockContact?.(chatId);
-    this.emit("event", { type: "info", text: `userbot: blocked ${chatId} after boundary violation`, chatId } as RuntimeEvent);
-    return true;
   }
 
   private mediaAwareText(m: IncomingMessage): string {
@@ -772,7 +762,26 @@ export class Runtime extends EventEmitter {
         await this.handleEmojiReaction(m).catch(e => this.emit("event", { type: "error", text: `handleEmojiReaction: ${silentErrorLabel(e)}` } as RuntimeEvent));
         return;
       }
-      await this.switchPrimaryAfterDumped(m.fromId);
+      // Manager-mode: ВСЕ сообщения от босса идут через `handleBossMessage`
+      // (Task 4.12b manager-mode tasks.md, design § 5.1). Босс взаимодействует
+      // с агентом исключительно через ответы на тикеты (reply / `#T-N` /
+      // `@username`); если у `parseBossReply` не получилось привязать
+      // сообщение к тикету — boss получает guidance-сообщение. Legacy-flow
+      // отдельной "primary owner chats normally" ветки больше нет.
+      if (this.cfg.ownerId && m.fromId === this.cfg.ownerId) {
+        try {
+          await this.handleBossMessage(m);
+        } catch (e) {
+          this.emit("event", {
+            type: "error",
+            text: `handleBossMessage: ${silentErrorLabel(e)}`
+          } as RuntimeEvent);
+        }
+        return;
+      }
+      // Manager-mode: legacy switch-primary-after-dumped удалён вместе с
+      // `dumped` стадией (Task 4.12b manager-mode). `ensureOwner` остаётся
+      // как backstop для случая когда `ownerId` ещё не закреплён.
       await this.ensureOwner(m.fromId);
       const isPrimary = this.isPrimaryFrom(m.fromId);
       if (!isPrimary && !this.strangersAllowed()) {
@@ -887,15 +896,16 @@ export class Runtime extends EventEmitter {
           return;
         }
         if (gate.action === "force-escalate") {
-          // Полная цепочка эскалации появится в Task 4.12; пока эмитим
-          // info-событие, чтобы WebUI/логика-наверху могли наблюдать срабатывание
-          // ворот. Сообщение клиенту НЕ отправляем (Req 17.5).
+          // Manager-mode: gate решил, что cold-stranger превысил квоту в
+          // 24 часа (Req 17.4-17.5). Открываем тикет и не отвечаем клиенту
+          // самостоятельно — пусть босс решит.
           this.emit("event", {
             type: "info",
             text: `gate force-escalate (${gate.reason})`,
             chatId: m.chatId,
             reason: gate.reason
           } as RuntimeEvent);
+          await this.openEscalationTicket(m, gateContact, "gate-force-escalate");
           return;
         }
         // gate.action === "allow" — продолжаем legacy-flow ниже.
@@ -909,15 +919,84 @@ export class Runtime extends EventEmitter {
       if (afterHoursOutcome === "handled") return;
       // afterHoursOutcome === "continue" — продолжаем legacy-flow ниже.
 
-      const romanticApproach = this.isRomanticApproach(incomingText);
-      if (await this.maybeBlockAfterBoundary(m.chatId, incomingText, romanticApproach)) return;
-      const tick = this.acquaintanceTick(romanticApproach);
+      // Manager-mode: романтические ветки legacy girl-agent (определение
+      // романтического подхода и блокировка после нарушения границ) удалены
+      // в Task 4.12b manager-mode tasks.md вместе с `dumped`-стадией.
+      // Контакт уже разрешён gate'ом и не VIP'ом отсечён afterHours'ом —
+      // формируем нейтральный tick и шлём через legacy schedule path, пока
+      // `mandate.decideAction` (см. ниже) переведёт сообщение в нужное
+      // действие.
+      const tick = this.acquaintanceTick(false);
+      // === Manager-mode: mandate.decideAction (Task 4.12b, Req 4 + 13) ===
+      // Решатель выбирает одно из четырёх действий: answer-self / escalate
+      // / decline / ignore. См. design § 5.4. При недоступном
+      // MandateRuntime (например, в тестах без `start()`) пропускаем —
+      // legacy schedule-path продолжает обычное поведение.
+      let mandateDecision: "answer-self" | "escalate" | "decline" | "ignore" | null = null;
+      if (this.mandateRuntime) {
+        try {
+          const r = await this.mandateRuntime.decideAction({
+            slug: this.cfg.slug,
+            incoming: incomingText,
+            tier: gateContact?.tier ?? "cold-stranger",
+            tone: this.cfg.tone,
+            outOfHours: snapshotAfterHours(this.cfg).isOutOfHours
+          });
+          mandateDecision = r.decision;
+          this.emit("event", {
+            type: "info",
+            text: `mandate: ${r.decision} (${r.reason})`,
+            chatId: m.chatId
+          } as RuntimeEvent);
+        } catch (e) {
+          this.emit("event", {
+            type: "error",
+            text: `mandate.decideAction: ${(e as Error).message}`,
+            chatId: m.chatId
+          } as RuntimeEvent);
+        }
+      }
+      if (mandateDecision === "escalate") {
+        await this.openEscalationTicket(m, gateContact, "mandate-escalate");
+        return;
+      }
+      if (mandateDecision === "ignore") {
+        this.emit("event", {
+          type: "ignored",
+          text: m.text,
+          chatId: m.chatId,
+          reason: "mandate-ignore"
+        } as RuntimeEvent);
+        return;
+      }
+      if (mandateDecision === "decline") {
+        try {
+          await this.tg.sendText(
+            m.chatId,
+            "К сожалению, не могу помочь с этим запросом."
+          );
+          this.emit("event", {
+            type: "outgoing",
+            text: "К сожалению, не могу помочь с этим запросом.",
+            chatId: m.chatId
+          } as RuntimeEvent);
+        } catch (e) {
+          this.emit("event", {
+            type: "error",
+            text: `mandate-decline send: ${(e as Error).message}`,
+            chatId: m.chatId
+          } as RuntimeEvent);
+        }
+        return;
+      }
+      // mandateDecision === "answer-self" или null (mandate runtime не доступен)
+      // → продолжаем стандартный legacy-flow с scheduleReply.
       // Регистрируем будущий ответ агента для квоты `gated` (Req 17.4).
       // Учёт отправки — оптимистичный: scheduleReply действительно ставит
       // отправку в очередь; реальная неудача отправки не уменьшит счётчик,
       // что согласуется с целью «не флудить cold-stranger».
       if (tick.shouldReply) this.recordAgentReply(key);
-      this.scheduleReply(key, m.chatId, hist, tick, "acquaintance", romanticApproach, m, undefined, tick.delaySec);
+      this.scheduleReply(key, m.chatId, hist, tick, "acquaintance", false, m, undefined, tick.delaySec);
       return;
     }
 
@@ -1082,6 +1161,275 @@ export class Runtime extends EventEmitter {
       this.emit("event", { type: "error", text: `handleIncoming: ${silentErrorLabel(e)}` } as RuntimeEvent);
     }
   }
+
+  /**
+   * Обработчик сообщений от босса в контексте `Escalation_Loop`
+   * (Task 4.12 manager-mode, Requirement 4 + 6).
+   *
+   * Прогоняет входящее через `parseBossReply`, переводит тикет
+   * `waiting-boss → answered` при удачном матче, либо отправляет боссу
+   * подсказку при неоднозначной/отсутствующей идентификации.
+   *
+   * Per design § 5.1: ВСЕ сообщения от босса проходят через этот метод.
+   * Если сообщение не распознано как boss-reply — отдаём boss-у guidance.
+   * Возвращает `void`; caller (`handleIncoming`) не должен делать ничего
+   * после этого вызова.
+   */
+  private async handleBossMessage(m: IncomingMessage): Promise<void> {
+    if (!this.cfg.ownerId || m.fromId !== this.cfg.ownerId) return;
+
+    let file;
+    try {
+      file = await loadTickets(this.cfg.slug);
+    } catch (e) {
+      this.emit("event", {
+        type: "error",
+        text: `handleBossMessage: loadTickets: ${(e as Error).message}`
+      } as RuntimeEvent);
+      return;
+    }
+
+    const openTickets: OpenTicketSummary[] = file.tickets
+      .filter(t => t.state === "waiting-boss" || t.state === "open")
+      .map(t => ({ id: t.id, clientUsername: t.clientUsername, state: t.state }));
+
+    if (openTickets.length === 0) {
+      // Нет открытых тикетов — отдаём boss-у короткое инфо. Это покрывает
+      // ситуацию когда босс пишет сам, а агенту нечем ответить (мы не
+      // повторяем girl-agent legacy-flow с романтикой, поэтому просто
+      // сообщаем что дел нет).
+      await this.replyToBoss(
+        m,
+        "Нет открытых тикетов. Жду эскалаций от клиентов."
+      );
+      return;
+    }
+
+    const bossMessageMap = new Map<number, string>();
+    for (const t of file.tickets) {
+      if (typeof t.bossMessageId === "number") bossMessageMap.set(t.bossMessageId, t.id);
+    }
+
+    const result = parseBossReply(
+      { fromId: m.fromId, text: m.text },
+      openTickets,
+      { ownerId: this.cfg.ownerId, bossMessageMap }
+    );
+
+    switch (result.kind) {
+      case "not-boss":
+        return;
+      case "matched": {
+        const ticket = file.tickets.find(t => t.id === result.ticketId);
+        if (!ticket) {
+          await this.replyToBoss(m, `Тикет ${result.ticketId} не найден или уже закрыт.`);
+          return;
+        }
+        const mandateText = await loadMandateFile(this.cfg.slug).catch(() => "");
+        const composed = await composeClientReplyFromBoss({
+          ticket,
+          bossReplyText: result.clientReplyText,
+          mandate: mandateText
+        });
+        if (composed.kind === "blocked") {
+          await this.replyToBoss(
+            m,
+            `Не могу отправить ответ клиенту — confidentiality-guard сработал (${composed.violationKind}). Перефразируй, не цитируя внутренний контекст.`
+          );
+          this.emit("event", {
+            type: "info",
+            text: `boss-reply blocked by guard: ${composed.reason}`,
+            chatId: m.chatId
+          } as RuntimeEvent);
+          return;
+        }
+        try {
+          await this.tg.sendText(ticket.chatId, composed.text);
+          this.emit("event", {
+            type: "outgoing",
+            text: composed.text,
+            chatId: ticket.chatId
+          } as RuntimeEvent);
+        } catch (e) {
+          await this.replyToBoss(m, `Не удалось отправить клиенту: ${(e as Error).message}.`);
+          return;
+        }
+        const now = new Date().toISOString();
+        const nextTicket = transitionTicket(ticket, "answered", "boss-reply", "boss", now);
+        nextTicket.bossReplyAt = now;
+        nextTicket.bossReplyRaw = m.text;
+        nextTicket.clientReply = composed.text;
+        nextTicket.clientReplyAt = now;
+        const idx = file.tickets.findIndex(t => t.id === ticket.id);
+        if (idx >= 0) file.tickets[idx] = nextTicket;
+        try {
+          await saveTickets(this.cfg.slug, file);
+        } catch (e) {
+          this.emit("event", {
+            type: "error",
+            text: `handleBossMessage: saveTickets: ${(e as Error).message}`
+          } as RuntimeEvent);
+        }
+        await this.replyToBoss(m, `Отправил клиенту (${ticket.id}).`);
+        return;
+      }
+      case "conflict": {
+        const ids = result.candidateIds.join(", ");
+        await this.replyToBoss(
+          m,
+          `Конфликт идентификации: ${ids}. Уточни какой тикет имеется в виду.`
+        );
+        return;
+      }
+      case "ambiguous-username": {
+        const ids = result.candidateIds.join(", ");
+        await this.replyToBoss(
+          m,
+          `У @${result.username} несколько открытых тикетов: ${ids}. Используй #T-N или reply.`
+        );
+        return;
+      }
+      case "no-username-meta": {
+        await this.replyToBoss(
+          m,
+          `У ${result.ticketId} нет username клиента — отвечай через reply или #T-N.`
+        );
+        return;
+      }
+      case "ticket-not-found": {
+        await this.replyToBoss(
+          m,
+          `Тикет ${result.ticketId} не найден или уже закрыт.`
+        );
+        return;
+      }
+      case "empty-reply": {
+        await this.replyToBoss(
+          m,
+          `В ответе пусто после префикса. Сформулируй текст для клиента.`
+        );
+        return;
+      }
+      case "no-identification": {
+        // Согласно design § 5.2 — всегда отдаём guidance. Боссу надо явно
+        // привязать ответ к тикету.
+        await this.replyToBoss(
+          m,
+          `Не понял к какому тикету это. Используй reply, #T-N или @username.`
+        );
+        return;
+      }
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
+    }
+  }
+
+  /**
+   * Тонкая обёртка над `tg.sendText` для ответов боссу. Эмитит outgoing-event
+   * и проглатывает ошибки сети — если босс недоступен, runtime не должен
+   * падать на этом.
+   */
+  private async replyToBoss(m: IncomingMessage, text: string): Promise<void> {
+    try {
+      await this.tg.sendText(m.chatId, text);
+      this.emit("event", { type: "outgoing", text, chatId: m.chatId } as RuntimeEvent);
+    } catch (e) {
+      this.emit("event", {
+        type: "error",
+        text: `replyToBoss: ${(e as Error).message}`,
+        chatId: m.chatId
+      } as RuntimeEvent);
+    }
+  }
+
+  /**
+   * Открывает escalation-тикет от имени runtime: создаёт `Ticket` в state
+   * `open`, генерирует резюме через `summarizeForBoss` (или фолбэк), кладёт
+   * тикет в `tickets.json` и уведомляет босса. Используется и для
+   * `gate.force-escalate` (Req 17.5), и для `mandate.decideAction=escalate`
+   * (Req 4.2-4.3, Task 4.12b).
+   */
+  private async openEscalationTicket(
+    m: IncomingMessage,
+    contact: GateContact | null | undefined,
+    reason: string
+  ): Promise<void> {
+    if (!this.cfg.ownerId) {
+      this.emit("event", {
+        type: "error",
+        text: "openEscalationTicket: cfg.ownerId is not set; cannot notify boss",
+        chatId: m.chatId
+      } as RuntimeEvent);
+      return;
+    }
+    let file;
+    try {
+      file = await loadTickets(this.cfg.slug);
+    } catch (e) {
+      this.emit("event", {
+        type: "error",
+        text: `openEscalationTicket: loadTickets: ${(e as Error).message}`,
+        chatId: m.chatId
+      } as RuntimeEvent);
+      return;
+    }
+
+    const ticketId = `#T-${nextTicketId(file)}`;
+    const fallbackChatId = String(m.chatId);
+    const mandateText = await loadMandateFile(this.cfg.slug).catch(() => "");
+    const summary = await summarizeForBoss({
+      message: m.text,
+      contact: {
+        chatId: contact?.chatId ?? fallbackChatId,
+        username: contact?.username
+      },
+      mandate: mandateText,
+      llm: this.llm
+    }).catch(() => `escalation: ${m.text.slice(0, 200)}`);
+
+    const ticket = createTicket({
+      contact: {
+        chatId: contact?.chatId ?? fallbackChatId,
+        username: contact?.username
+      },
+      message: m.text,
+      ticketId,
+      initialSummary: summary
+    });
+    const waiting = transitionTicket(ticket, "waiting-boss", reason, "system");
+    file.tickets.push(waiting);
+    try {
+      await saveTickets(this.cfg.slug, file);
+    } catch (e) {
+      this.emit("event", {
+        type: "error",
+        text: `openEscalationTicket: saveTickets: ${(e as Error).message}`,
+        chatId: m.chatId
+      } as RuntimeEvent);
+      return;
+    }
+
+    const usernameTag = contact?.username ? ` @${contact.username}` : "";
+    const bossText = `${ticketId}${usernameTag}\n${summary}`;
+    try {
+      await this.tg.sendText(this.cfg.ownerId, bossText);
+      this.emit("event", {
+        type: "outgoing",
+        text: bossText,
+        chatId: this.cfg.ownerId,
+        reason: `escalation:${reason}`
+      } as RuntimeEvent);
+    } catch (e) {
+      this.emit("event", {
+        type: "error",
+        text: `openEscalationTicket: notify boss: ${(e as Error).message}`,
+        chatId: this.cfg.ownerId
+      } as RuntimeEvent);
+    }
+  }
+
 
   private async generateAndSend(
     chatId: number | string,
@@ -1352,7 +1700,7 @@ export class Runtime extends EventEmitter {
   // ===== commands =====
   async cmdStatus(): Promise<string> {
     const rel = await readRelationship(this.cfg.slug);
-    const stage = findStage(this.cfg.stage);
+    const stage = legacyStage(this.cfg.stage);
     const communication = normalizeCommunicationProfile(this.cfg);
     return [
       `имя: ${this.cfg.name}, ${this.cfg.age}`,
@@ -1418,7 +1766,7 @@ export class Runtime extends EventEmitter {
 
   async cmdSetStage(stageId: string): Promise<string> {
     const prev = this.cfg.stage;
-    const resolved = findStage(stageId);
+    const resolved = legacyStage(stageId);
     this.cfg.stage = resolved.id;
     await writeConfig(this.cfg);
     await maybeAdvanceRelationshipTimeline(this.cfg, prev, resolved.id);
@@ -1490,7 +1838,7 @@ export class Runtime extends EventEmitter {
 
   async cmdDebug(chatId?: string): Promise<string> {
     const rel = await readRelationship(this.cfg.slug);
-    const stage = findStage(this.cfg.stage);
+    const stage = legacyStage(this.cfg.stage);
     const conflict = await readConflict(this.cfg.slug);
     const communication = normalizeCommunicationProfile(this.cfg);
     const key = chatId ?? this.histKey(this.cfg.ownerId ?? "default");
@@ -1527,7 +1875,7 @@ export class Runtime extends EventEmitter {
     const target = chatId ? this.resolveChatRef(chatId) : this.cfg.ownerId;
     const key = target !== undefined ? this.histKey(target) : this.histKey("default");
     const rel = await readRelationship(this.cfg.slug);
-    const stage = findStage(this.cfg.stage);
+    const stage = legacyStage(this.cfg.stage);
     const conflict = await readConflict(this.cfg.slug);
     const { coldActive } = activeConflict(conflict);
     const forcedWake = Date.now() < this.forcedWakeUntil && (!this.forcedWakeChatId || this.forcedWakeChatId === key);

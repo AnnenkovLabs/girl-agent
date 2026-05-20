@@ -10,7 +10,7 @@ import {
   appendMd
 } from "../../storage/md.js";
 import { makeLLM } from "../../llm/index.js";
-import { findStage, STAGE_PRESETS } from "../../engine/legacy-stage.js";
+import { legacyStage, STAGE_PRESETS } from "../../engine/legacy-stage.js";
 import { findCommunicationPreset, COMMUNICATION_PRESETS } from "../../presets/communication.js";
 import { LLM_PRESETS } from "../../presets/llm.js";
 import { generatePersonaPack } from "../../engine/persona-gen.js";
@@ -108,7 +108,7 @@ export function registerAssistantRoutes(r: Router): void {
       return { reply, toolCalls: [] };
     }
 
-    const stage = findStage(cfg.stage);
+    const stage = legacyStage(cfg.stage);
     const status = bus.status(cfg.slug);
     const userQuestion = body.messages.slice().reverse().find(m => m.role === "user")?.content ?? "";
     const relevantKnowledge = renderRelevantKnowledge(userQuestion);

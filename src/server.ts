@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { findPreset } from "./presets/llm.js";
-import { findStage } from "./engine/legacy-stage.js";
+import { legacyStage } from "./engine/legacy-stage.js";
 import { COMMUNICATION_PRESETS } from "./presets/communication.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
@@ -262,7 +262,7 @@ function configFromEnv(): ProfileConfig | null {
   const name = e.MANAGER_AGENT_NAME || pickRandomNames(nationality, 1)[0]!;
   const age = Number(e.MANAGER_AGENT_AGE ?? 18);
   const tz = e.MANAGER_AGENT_TZ ? (parseTzFlag(e.MANAGER_AGENT_TZ) ?? defaultTzForNationality(nationality)) : defaultTzForNationality(nationality);
-  const stage = e.MANAGER_AGENT_STAGE ? findStage(e.MANAGER_AGENT_STAGE).id : "tg-given-cold";
+  const stage = e.MANAGER_AGENT_STAGE ? legacyStage(e.MANAGER_AGENT_STAGE).id : "tg-given-cold";
   const commPreset = COMMUNICATION_PRESETS.find((c) => c.id === (e.MANAGER_AGENT_COMM_PRESET ?? "normal")) ?? COMMUNICATION_PRESETS[0]!;
 
   return {

@@ -1,6 +1,6 @@
 import type { LLMClient } from "../llm/index.js";
 import type { BehaviorTickResult, CommunicationProfile, ProfileConfig } from "../types.js";
-import { findStage } from "./legacy-stage.js";
+import { legacyStage } from "./legacy-stage.js";
 import { communicationDecisionState, ignoreTendencyPrompt, normalizeCommunicationProfile, normalizeIgnoreTendency } from "../presets/communication.js";
 import { readRelationship } from "../storage/md.js";
 import type { PresenceState } from "./presence.js";
@@ -113,7 +113,7 @@ export async function behaviorTick(
   incoming: string,
   ctx: BehaviorContext = {}
 ): Promise<BehaviorTickResult> {
-  const stage = findStage(cfg.stage);
+  const stage = legacyStage(cfg.stage);
   const rel = await readRelationship(cfg.slug);
   const communication = normalizeCommunicationProfile(cfg);
   const ignoreTendency = normalizeIgnoreTendency(cfg.ignoreTendency);

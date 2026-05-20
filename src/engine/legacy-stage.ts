@@ -45,11 +45,16 @@ export const LEGACY_DEFAULT_STAGE: LegacyStagePreset = {
 };
 
 /**
- * Совместимый аналог `findStage` из удалённого `presets/stages.ts`. Возвращает
+ * Совместимый аналог удалённого хелпера из `presets/stages.ts`. Возвращает
  * один и тот же дефолт независимо от запрошенного id, чтобы не падать на
  * местах, где старый код передаёт строку.
+ *
+ * @deprecated после Task 4.12b manager-mode оставлен только для backward-
+ * compatibility модулей, которые не были переведены на per-contact `tier`.
+ * Не вызывайте из новых кодовых путей — используйте `LEGACY_DEFAULT_STAGE`
+ * напрямую или рефакторите вызов.
  */
-export function findStage(_id?: string | number): LegacyStagePreset {
+export function legacyStage(_id?: string | number): LegacyStagePreset {
   void _id;
   return LEGACY_DEFAULT_STAGE;
 }
