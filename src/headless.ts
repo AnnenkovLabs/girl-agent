@@ -1,6 +1,6 @@
 import readline from "node:readline";
 import type { Runtime, RuntimeEvent } from "./engine/runtime.js";
-import { findStage } from "./presets/stages.js";
+import { findStage } from "./engine/legacy-stage.js";
 import { readRelationship, readMd, readSessionLog, sessionDate } from "./storage/md.js";
 import type { ProfileConfig } from "./types.js";
 

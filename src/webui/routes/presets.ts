@@ -1,6 +1,6 @@
 import { Router } from "../http.js";
 import { LLM_PRESETS, findPreset } from "../../presets/llm.js";
-import { STAGE_PRESETS } from "../../presets/stages.js";
+import { STAGE_PRESETS } from "../../engine/legacy-stage.js";
 import { COMMUNICATION_PRESETS } from "../../presets/communication.js";
 import { TIMEZONES, findTzByQuery } from "../../data/timezones.js";
 import { pickRandomNames } from "../../data/names.js";

@@ -12,7 +12,7 @@ import type { ProfileConfig } from "./types.js";
 import { makeLLM } from "./llm/index.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { findPreset } from "./presets/llm.js";
-import { findStage } from "./presets/stages.js";
+import { findStage } from "./engine/legacy-stage.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
 import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "./presets/communication.js";

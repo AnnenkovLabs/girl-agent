@@ -1,7 +1,7 @@
 import type { ProfileConfig, Weekday } from "../types.js";
 import type { LLMClient } from "../llm/index.js";
 import { readAgenda, writeAgenda, readMd, writeMd, readRelationship, type AgendaItem } from "../storage/md.js";
-import { findStage } from "../presets/stages.js";
+import { findStage } from "./legacy-stage.js";
 import { communicationDecisionState, normalizeCommunicationProfile } from "../presets/communication.js";
 import type { DailyLife } from "./daily-life.js";
 import type { ConflictState } from "./conflict.js";

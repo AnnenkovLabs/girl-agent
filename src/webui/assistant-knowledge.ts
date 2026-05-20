@@ -1,6 +1,6 @@
 import { COMMUNICATION_PRESETS } from "../presets/communication.js";
 import { LLM_PRESETS } from "../presets/llm.js";
-import { STAGE_PRESETS } from "../presets/stages.js";
+import { STAGE_PRESETS } from "../engine/legacy-stage.js";
 
 export interface KnowledgeArticle {
   category: string;

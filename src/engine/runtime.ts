@@ -1,4 +1,4 @@
-import type { ProfileConfig, StageId } from "../types.js";
+import type { ProfileConfig } from "../types.js";
 import { makeLLM, type ChatMessage, type LLMClient } from "../llm/index.js";
 import { makeTgAdapter, type TgAdapter, type IncomingMessage } from "../telegram/index.js";
 import { buildSystemPrompt, type ConversationTurn, type RelationshipScope } from "./prompt.js";
@@ -8,7 +8,8 @@ import {
   appendSessionLog, appendSharedMemory, readRelationship, writeRelationship, writeConfig, writeMd,
   readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId, profileDir
 } from "../storage/md.js";
-import { findStage } from "../presets/stages.js";
+import { findStage } from "./legacy-stage.js";
+import type { LegacyStageId as StageId } from "./legacy-stage.js";
 import { communicationProfileLabel, normalizeCommunicationProfile } from "../presets/communication.js";
 import { findPreset } from "../presets/llm.js";
 import { extractAgendaUpdates, dueAgendaItems, markAgendaFired, decideAfterProactiveResponse, ensureAutonomousAgenda, rescheduleAgenda, reconcileAgendaAfterConflict } from "./agenda.js";
@@ -28,7 +29,6 @@ import { addStickerToLibrary, pickSticker } from "./stickers.js";
 import { EventEmitter } from "node:events";
 import { applyLLMUpdate, describeLLM } from "../config/llm-update.js";
 import { injectTypos, pickTypoIntensity } from "./typos.js";
-import { decideStageTransition, shouldRunStageTransitionCheck } from "./stage-transitions.js";
 import { classifyDeletionAwareness, shouldRespondToDeletion, buildDeletionPromptContext, isInHistory as deletionInHistory } from "./deletion-handler.js";
 import { decideEmojiReactionResponse, shouldThrottleEmojiReactions, isToxicReactionAboutHerSelf } from "./emoji-reaction-handler.js";
 import type { DeletedMessageContext } from "../types.js";
@@ -798,9 +798,10 @@ export class Runtime extends EventEmitter {
 
     // Task #4: умная смена стадии (проверка раз в 5 сообщений).
     this.msgsSinceStageCheck++;
-    if (shouldRunStageTransitionCheck(this.msgsSinceStageCheck)) {
-      this.checkStageTransition().catch(() => {});
-    }
+    // legacy stage-transitions удалены вместе с girl-agent stages preset
+    // (см. .kiro/specs/manager-mode/tasks.md task 2.1). Финальная замена
+    // на per-contact tier-transitions появится в задаче 4.7.
+    void this.msgsSinceStageCheck;
 
     if (!tick.shouldReply) {
       this.lastDecision.set(key, baseDecision);
@@ -1533,29 +1534,11 @@ export class Runtime extends EventEmitter {
   }
 
   private async checkStageTransition(): Promise<void> {
+    // Заглушка после удаления legacy stage-transitions
+    // (.kiro/specs/manager-mode/tasks.md task 2.1). Финальная per-contact
+    // tier-логика появится в задаче 4.7.
     if (this.paused) return;
     this.msgsSinceStageCheck = 0;
-    try {
-      const rel = await readRelationship(this.cfg.slug);
-      const s = this.stageStats.get(this.cfg.stage);
-      const decision = decideStageTransition({
-        currentStage: this.cfg.stage,
-        score: rel.score,
-        herMessagesInStage: s?.herMsgs ?? 0,
-        hisMessagesInStage: s?.hisMsgs ?? 0,
-        ignoresInStage: s?.ignoresInStage ?? 0,
-        hasActiveConflict: false
-      });
-      if (!decision) return;
-      const oldStage = this.cfg.stage;
-      this.cfg.stage = decision.next;
-      await writeConfig(this.cfg);
-      await writeRelationship(this.cfg.slug, { ...rel, stage: decision.next });
-      await maybeAdvanceRelationshipTimeline(this.cfg, oldStage, decision.next);
-      this.stageStats.set(decision.next, { herMsgs: 0, hisMsgs: 0, ignoresInStage: 0, lastCheckAt: 0, stageEnteredAt: Date.now() });
-      this.emit("event", { type: "info", text: `stage ${oldStage} → ${decision.next} (${decision.reason})` } as RuntimeEvent);
-      await appendSessionLog(this.cfg.slug, this.cfg.tz, `[stage-transition] ${oldStage} → ${decision.next} (${decision.reason})`, this.cfg.ownerId);
-    } catch { /* swallow */ }
   }
 
   // ============================================================================

@@ -10,12 +10,13 @@ import {
   appendMd
 } from "../../storage/md.js";
 import { makeLLM } from "../../llm/index.js";
-import { findStage, STAGE_PRESETS } from "../../presets/stages.js";
+import { findStage, STAGE_PRESETS } from "../../engine/legacy-stage.js";
 import { findCommunicationPreset, COMMUNICATION_PRESETS } from "../../presets/communication.js";
 import { LLM_PRESETS } from "../../presets/llm.js";
 import { generatePersonaPack } from "../../engine/persona-gen.js";
 import { maybeAdvanceRelationshipTimeline } from "../../engine/realism.js";
-import type { ProfileConfig, StageId } from "../../types.js";
+import type { ProfileConfig } from "../../types.js";
+import type { LegacyStageId as StageId } from "../../engine/legacy-stage.js";
 import { bus } from "../runtime-bus.js";
 import { renderRelevantKnowledge } from "../assistant-knowledge.js";
 

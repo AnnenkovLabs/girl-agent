@@ -48,34 +48,6 @@ export interface MCPPreset {
   spawn?: (secrets: Record<string, string>) => { command: string; args: string[]; env?: Record<string, string> };
 }
 
-export type StageId =
-  | "met-irl-got-tg"
-  | "tg-given-cold"
-  | "tg-given-warming"
-  | "convinced"
-  | "first-date-done"
-  | "dating-early"
-  | "dating-stable"
-  | "long-term"
-  | "dumped";
-
-export interface StagePreset {
-  id: StageId;
-  num: number;
-  label: string;
-  description: string;
-  /** behavioural defaults baked into prompt */
-  defaults: {
-    interest: number;     // -100..100
-    trust: number;
-    attraction: number;
-    annoyance: number;
-    cringeTolerance: number; // higher = more tolerant
-    ignoreChance: number;    // 0..1 base probability per incoming message
-    replyDelaySec: [number, number]; // min,max
-  };
-}
-
 export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
 export interface BusySlot {
@@ -109,7 +81,6 @@ export interface ProfileConfig {
   /** IANA timezone, e.g. "Europe/Moscow" or "Europe/Kyiv" */
   tz: string;
   mode: ClientMode;
-  stage: StageId;
   llm: {
     presetId: string;
     proto: LLMProto;
@@ -136,6 +107,13 @@ export interface ProfileConfig {
   mcp?: { id: string; secrets: Record<string, string> }[];
   ownerId?: number; // tg user id of the human (set on first message in practice / fallback)
   privacy?: PrivacyMode;
+  /**
+   * @deprecated Legacy от girl-agent (StageId). Заменяется per-contact полем
+   * `tier` в задаче 3.1 manager-mode. Сейчас оставлен полем-строкой
+   * (с дефолтом "manager-default" для новых профилей), чтобы код этапа 2 не
+   * падал на ссылках `cfg.stage`. Удаляется в задаче 4.12.
+   */
+  stage: string;
   createdAt: string;
   /** Часы сна (0-23). sleepFrom — когда ложится, sleepTo — когда просыпается. Может пересекать полночь. */
   sleepFrom: number;

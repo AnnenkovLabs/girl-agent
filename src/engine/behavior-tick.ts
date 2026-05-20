@@ -1,6 +1,6 @@
 import type { LLMClient } from "../llm/index.js";
 import type { BehaviorTickResult, CommunicationProfile, ProfileConfig } from "../types.js";
-import { findStage } from "../presets/stages.js";
+import { findStage } from "./legacy-stage.js";
 import { communicationDecisionState, ignoreTendencyPrompt, normalizeCommunicationProfile, normalizeIgnoreTendency } from "../presets/communication.js";
 import { readRelationship } from "../storage/md.js";
 import type { PresenceState } from "./presence.js";

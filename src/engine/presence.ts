@@ -1,7 +1,8 @@
 // Симуляция онлайн-поведения. Каждая девушка имеет свой паттерн заходов в тг.
 // Используется для реалистичных задержек ответа и для решения "она не онлайн прям сейчас".
 
-import type { BusySlot, CommunicationProfile, ProfileConfig, StageId, Weekday } from "../types.js";
+import type { BusySlot, CommunicationProfile, ProfileConfig, Weekday } from "../types.js";
+import type { LegacyStageId as StageId } from "./legacy-stage.js";
 import type { ConflictState } from "./conflict.js";
 import { normalizeCommunicationProfile } from "../presets/communication.js";
 

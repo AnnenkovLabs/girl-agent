@@ -7,7 +7,7 @@ import {
 import type { ProfileConfig } from "../../types.js";
 import { parseTelegramProxyInput } from "../../telegram/proxy-parse.js";
 import { bus } from "../runtime-bus.js";
-import { findStage } from "../../presets/stages.js";
+import { findStage } from "../../engine/legacy-stage.js";
 import { ensurePersonaPack, generatePersonaPack } from "../../engine/persona-gen.js";
 import { makeLLM } from "../../llm/index.js";
 import { applyLLMUpdate, describeLLM } from "../../config/llm-update.js";

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { findPreset } from "./presets/llm.js";
-import { findStage } from "./presets/stages.js";
+import { findStage } from "./engine/legacy-stage.js";
 import { COMMUNICATION_PRESETS } from "./presets/communication.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
@@ -12,7 +12,8 @@ import { makeLLM } from "./llm/index.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { runHeadlessJsonEvents } from "./headless.js";
 import { checkForPendingMigrations, runMigrations, formatUpdateWarnings } from "./migrations/index.js";
-import type { ProfileConfig, ClientMode, Nationality, StageId, LLMProto, PrivacyMode } from "./types.js";
+import type { ProfileConfig, ClientMode, Nationality, LLMProto, PrivacyMode } from "./types.js";
+import type { LegacyStageId as StageId } from "./engine/legacy-stage.js";
 import { applyLLMUpdate, describeLLM } from "./config/llm-update.js";
 import { parseTelegramProxyInput } from "./telegram/proxy-parse.js";
 
