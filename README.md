@@ -1,32 +1,40 @@
 <div align="center">
 
-![girl-agent banner](https://girl-agent.com/og-image.png)
+# manager-agent
 
-# girl-agent
-
-**ИИ-девушка в Telegram, которая ведёт себя как человек.**
-Со сном, расписанием, памятью, характером — и без «конечно, я понимаю».
-
-[Сайт](https://girl-agent.com) · [Документация](https://docs.girl-agent.com) · [Канал](https://t.me/GirlAgentAI) · [Сообщество](https://t.me/GirlAgentAI_chat) · [Автор: @voided\_net](https://t.me/voided_net)
+**ИИ-менеджер в Telegram, который ведёт переписку как живой секретарь.**
+С рабочим расписанием, паузами, памятью на клиентов — и без «конечно, я понимаю».
 
 [![License](https://img.shields.io/badge/license-source--available-blue)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org)
-[![Telegram](https://img.shields.io/badge/Telegram-Bot%20%2B%20Userbot-26A5E4?logo=telegram&logoColor=white)](https://t.me/GirlAgentAI)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](#docker-для-серверов)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot%20%2B%20Userbot-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org)
+[![Fork](https://img.shields.io/badge/fork%20of-TheSashaDev%2Fgirl--agent-orange?logo=github&logoColor=white)](https://github.com/TheSashaDev/girl-agent)
 
 </div>
 
 ---
 
-> Это бета. Со всеми проблемами и багами — в [Issues](https://github.com/TheSashaDev/girl-agent/issues) или [@voided_net](https://t.me/voided_net).
+> ⚠️ **Это форк.** `manager-agent` — производный проект на базе [TheSashaDev/girl-agent](https://github.com/TheSashaDev/girl-agent).
+> Все права на оригинальный код принадлежат автору оригинала. Условия исходной source-available лицензии (GSACL 1.1) сохраняются полностью — см. [LICENSE](./LICENSE).
+>
+> Этот форк переориентирует движок персоны на сценарий **деловой секретарь**, оставляя архитектуру и слои реализма оригинала нетронутыми идейно. Спасибо [@voided\_net](https://t.me/voided_net) за оригинальный движок.
+
+---
 
 ## О проекте
 
-Она не отвечает на каждое сообщение. Иногда читает и молчит. Иногда ставит реакцию. Иногда отвечает через час, потому что была занята или просто не хотела.
+Он не отвечает на каждое сообщение мгновенно. Иногда читает и думает. Иногда уточняет у владельца. Иногда отвечает через 40 минут, потому что был на созвоне.
 
 Это не баг. Так задумано.
 
-`girl-agent` — движок ИИ-персоны для Telegram. **Не промпт. Не GPTs. Не плагин.** Это полноценный агент со своим состоянием: расписание дня, паттерн присутствия, сон, память на месяцы вперёд, конфликт-система, пять счётчиков отношений, девять стадий сближения. Поведение собирается из этих слоёв, а не из одного `system_prompt`.
+`manager-agent` — движок ИИ-секретаря для Telegram. **Не промпт. Не GPTs. Не плагин.** Это полноценный агент со своим состоянием: рабочее расписание, паттерн присутствия, память на контактов, мандат на самостоятельные ответы, цикл эскалации владельцу, шесть уровней доверия для каждого собеседника. Поведение собирается из этих слоёв, а не из одного `system_prompt`.
+
+Когда клиент пишет «здравствуйте, хотел предложить идею по проекту», менеджер может:
+- ответить сам, если тема покрыта мандатом,
+- открыть тикет и уточнить у владельца, если нужно решение,
+- вежливо отказать или промолчать в нерабочее время — в зависимости от политики.
+
+Владелец отвечает менеджеру в Telegram (reply, `#T-42`, `@username`) — менеджер сам доносит формулировку клиенту, не утечки внутреннего контекста.
 
 ---
 
@@ -35,149 +43,47 @@
 - [Быстрый старт](#быстрый-старт)
   - [Linux / macOS / WSL — одной командой](#linux--macos--wsl--одной-командой)
   - [Windows — через npx](#windows--через-npx-рекомендуем)
-  - [Если уже есть Node ≥ 22](#если-уже-есть-node--22)
   - [Docker (для серверов)](#docker-для-серверов)
 - [Что под капотом](#что-под-капотом)
-- [Почему не просто GPTs или промпт](#почему-не-просто-gpts-или-промпт)
-- [Документация](https://docs.girl-agent.com)
+- [Чем отличается от оригинала](#чем-отличается-от-оригинала)
+- [Сосуществование с girl-agent](#сосуществование-с-girl-agent)
 - [Безопасность](#безопасность)
-- [Лицензия](#лицензия)
+- [Лицензия и атрибуция](#лицензия-и-атрибуция)
 - [Changelog](./CHANGELOG.md)
 
 ---
 
 ## Быстрый старт
 
-### Linux / macOS / WSL — одной командой
+> 🚧 **Статус:** в активной разработке. Раздел установки актуализируется по мере выхода первых релизов форка. Пока — запуск из исходников.
 
-Без Node на машине, без `sudo`:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/master/scripts/install.sh | sh
-```
-
-Что произойдёт:
-- определит OS + arch (linux x64/arm64, macos x64/arm64, wsl);
-- если есть Docker → поставит Docker-обёртку (полная изоляция от системы);
-- иначе → скачает [официальный Node.js 22 LTS](https://nodejs.org) в `~/.local/share/girl-agent/runtime/` и поставит туда же `@thesashadev/girl-agent` (системный Node не трогается);
-- положит shim `girl-agent` в `~/.local/bin/girl-agent`;
-- ничего не пишется в `/usr/local/`, `sudo` не нужен.
-
-Дальше:
+### Из исходников
 
 ```sh
-girl-agent                  # интерактивный визард первичной настройки
-girl-agent --profile=arina  # запустить готовый профиль
-girl-agent server --help    # серверный режим (без TTY, для systemd / cron / CI)
+git clone https://github.com/shxpe0x/girl-agent-manager.git manager-agent
+cd manager-agent
+npm install
+npm run dev
 ```
 
-Опции установщика:
+WebUI поднимется на `http://localhost:3100` (по умолчанию для форка, чтобы не конфликтовать с оригинальным `girl-agent` на 3000).
+
+### Linux / macOS / WSL
 
 ```sh
-curl -fsSL .../install.sh | sh -s -- --docker        # форсировать Docker
-curl -fsSL .../install.sh | sh -s -- --local         # форсировать локальную Node
-curl -fsSL .../install.sh | sh -s -- --version=0.4.1 # конкретную версию пакета
+# раздел добавится в первом релизе форка
 ```
-
-Удалить: `rm -rf ~/.local/share/girl-agent ~/.local/bin/girl-agent`.
-
----
 
 ### Windows — через npx (рекомендуем)
 
-Самый быстрый способ. Без установщика, без WSL, без Docker.
-
-1. Скачай и поставь [Node.js 22 LTS](https://nodejs.org/en/download/) (`.msi`-инсталлер, галочка **Add to PATH**).
-2. В PowerShell:
-
-   ```powershell
-   npx @thesashadev/girl-agent
-   ```
-
-   Первый запуск скачает пакет (~30 МБ) и откроет визард прямо в PowerShell. WebUI поднимется на `http://localhost:3000`.
-
-Хочешь короче — поставь глобально:
-
-```powershell
-npm install -g @thesashadev/girl-agent
-girl-agent
-```
-
-Нужен системный лоток и автозапуск? Есть [нативный десктоп-клиент на Rust](./desktop-rs/) — готовые бинари в [Releases](https://github.com/TheSashaDev/girl-agent/releases).
-
----
-
-### Если уже есть Node ≥ 22
-
 ```sh
-npx @thesashadev/girl-agent
-npx @thesashadev/girl-agent --profile=arina
+# раздел добавится в первом релизе форка
 ```
-
-Или глобально:
-
-```sh
-npm install -g @thesashadev/girl-agent
-girl-agent
-```
-
----
 
 ### Docker (для серверов)
 
-Интерактивная первичная настройка (визард внутри контейнера):
-
 ```sh
-docker run -it --rm -v girl-agent-data:/data ghcr.io/thesashadev/girl-agent:latest
-```
-
-Headless (для systemd / docker-compose / k8s) — сначала готовим конфиг, потом запускаем без TTY:
-
-```sh
-# 1) шаблон конфига
-docker run --rm ghcr.io/thesashadev/girl-agent:latest server --print-config > bot.json
-
-# 2) отредактировать bot.json (token, api-key)
-
-# 3) поднять в фоне
-docker run -d --name girl-agent --restart=unless-stopped \
-  -v girl-agent-data:/data \
-  -v $PWD/bot.json:/config/bot.json:ro \
-  ghcr.io/thesashadev/girl-agent:latest \
-  server --config /config/bot.json --headless
-```
-
-Или совсем без файла, через env-vars:
-
-```sh
-docker run -d --name girl-agent --restart=unless-stopped \
-  -v girl-agent-data:/data \
-  -e GIRL_AGENT_MODE=bot \
-  -e GIRL_AGENT_TOKEN=... \
-  -e GIRL_AGENT_API_PRESET=claudehub \
-  -e GIRL_AGENT_API_KEY=... \
-  -e GIRL_AGENT_NAME='Аня' -e GIRL_AGENT_AGE=22 \
-  ghcr.io/thesashadev/girl-agent:latest \
-  server --headless
-```
-
-Готовые шаблоны (можно скопировать прямо из бинаря):
-
-```sh
-girl-agent server --print-config    # bot.json
-girl-agent server --print-systemd   # /etc/systemd/system/girl-agent.service
-girl-agent server --print-docker    # Dockerfile / compose / k8s snippets
-```
-
-И в корне: [`docker-compose.example.yml`](./docker-compose.example.yml).
-
-**Из исходников:**
-
-```sh
-git clone https://github.com/TheSashaDev/girl-agent.git
-cd girl-agent
-npm install
-npm run dev
+# раздел добавится в первом релизе форка
 ```
 
 ---
@@ -188,111 +94,69 @@ npm run dev
 
 | | Слой              | Что делает |
 |-|-------------------|------------|
-| 📱 | **Presence**      | Она не всегда онлайн. Паттерн присутствия зависит от персонажа: кто-то в телефоне круглые сутки, кто-то заходит раз в час, кто-то только вечером. |
-| 😴 | **Sleep**         | Ночью спит — можно разбудить через `:wake`, но без команды шанс ответа низкий. |
-| 📅 | **Daily-life**    | У каждого дня есть расписание: пары, работа, дорога, свободное время. Если на занятиях — телефон недоступен. |
-| ❤️ | **Relationship**  | Пять счётчиков: интерес, доверие, симпатия, раздражение, толер.кринжа. Меняются от каждого диалога. |
-| 📈 | **Stages**        | 9 стадий сближения: «дала тг, но холодная» → «давно вместе». Стадия влияет на тепло, флирт, длину ответов. |
-| ⚠️ | **Conflict**      | Если давить, спамить или нарушать границы — включается конфликт. Может замолчать на часы или дни. |
-| 🧠 | **Memory**        | Важные события пишутся в `long-term.md` и всплывают в будущих диалогах. |
-| 🚫 | **Anti-AI**       | Промпт запрещает markdown, «конечно», «я понимаю», эмодзи-ряды, вопросы в конце и всё что палит ChatGPT. |
+| 📱 | **Presence**      | Не всегда «онлайн». Заходит в чат по своему рабочему паттерну: кто-то постоянно в телефоне, кто-то только между встречами. |
+| 🕘 | **Work hours**    | Вне рабочих часов поведение определяется политикой: молчание / автоответ / только VIP-контакты. |
+| 📅 | **Daily-life**    | У каждого дня — расписание: встречи, созвоны, обед, рабочие блоки. На созвоне телефон недоступен. |
+| 👥 | **Contact tiers** | 6 уровней доверия для каждого контакта: `cold-stranger → introduced → regular → trusted-partner → vip` плюс `blocked`. Уровень влияет на тон, скорость, мандат. |
+| 📜 | **Mandate**       | Текстовая политика владельца: что менеджер решает сам, что эскалирует. Без мандата всё нестандартное идёт владельцу. |
+| 🎫 | **Escalation**    | Тикет с ID вида `#T-42`. Холдинг-сообщение клиенту → резюме владельцу → ответ владельца (reply / `#T-N` / `@username`) → формулировка клиенту. |
+| 🧠 | **Memory**        | Карточки на каждого контакта: чем занимается, что обещали, чем закончили. Всплывают в будущих диалогах. |
+| 🚫 | **Anti-AI**       | Промпт запрещает markdown, «конечно», «я понимаю», эмодзи-ряды, вопросы в конце и всё что палит ChatGPT. Лёгкие опечатки — для реализма. |
 | 👤 | **Userbot mode**  | Настоящий Telegram-аккаунт через MTProto. Умеет читать, ставить реакции, печатать, удалять и редактировать. Выглядит как живой человек. |
-| 🗓 | **Agenda**        | Бот сам планирует проактивные сообщения: пожелать удачи на собес, спросить как прошла встреча, поздравить с днём рождения. |
-
-[Подробный разбор каждого слоя →](https://docs.girl-agent.com/docs/developers/architecture)
+| 🗓 | **Agenda**        | Двусторонняя проактивность: follow-up клиентам по обещаниям + дайджесты владельцу о состоянии входящих. |
 
 ---
 
-## Почему не просто GPTs или промпт
+## Чем отличается от оригинала
 
-Вариантов сделать «девушку в Telegram» несколько — от костыльных до полноценных. Разберём что есть и где дыры.
+`girl-agent` симулирует личные отношения с одним собеседником. `manager-agent` обслуживает множество внешних контактов от имени одного владельца. Поэтому:
 
-<details>
-<summary><strong>ChatGPT GPTs</strong> — кастомный бот внутри ChatGPT с system prompt</summary>
+| Оригинал (`girl-agent`) | Форк (`manager-agent`) |
+|---|---|
+| 9 стадий отношений (`met-irl-got-tg` → `long-term`) | 6 контактных уровней (`cold-stranger` → `vip`, плюс `blocked`) |
+| Один `relationship.md` на профиль | Карточка на каждого контакта в `contacts/<chat_id>.json` |
+| Сон, ночное пробуждение, гормоны цикла | Рабочие часы, политика после-часов, без гормонов |
+| 5 пресетов общения (`cute`/`clingy`/`alt`/`chatty`/`normal`) | 3 деловых тона (`formal-вы` / `friendly-ты` / `mixed-by-tier`) |
+| Романтический approach, отказ слать нюды | Мандат, эскалация, конфиденциальность ответа |
+| Owner определяется первым написавшим | Owner задаётся явно при создании профиля |
+| Privacy: `owner-only` / `allow-strangers` | `Gate_Level`: `open` / `gated` / `whitelist` |
 
-- Нет памяти между сессиями — каждая начинается с нуля
-- Нет Telegram — только веб-интерфейс
-- Нет реакций, печати, редактирования
-- Бот всегда «онлайн» — нет расписания или сна
-- Память ограничена контекстным окном
+Что **сохраняется** из оригинала: presence, daily-life, behavior-tick (решение reply/ignore/delay/bubbles), agenda (но двусторонняя), memory-palace, typos, online-heartbeat, telegram-адаптеры (bot + userbot), LLM-клиент, WebUI-каркас, миграции.
 
-**Итог:** чат-бот с кастомным промптом, без состояния и реалистичного поведения.
+---
 
-</details>
+## Сосуществование с girl-agent
 
-<details>
-<summary><strong>OpenClaw + prompt</strong> — фреймворк для AI-ассистентов с личностью в markdown</summary>
+Форк специально настроен так, чтобы запускаться рядом с оригиналом без коллизий:
 
-Личность через `SOUL.md`, `IDENTITY.md`, `USER.md`. Telegram-bridge через GramJS (MTProto).
+| | Оригинал | Форк |
+|---|---|---|
+| Имя пакета npm | `@thesashadev/girl-agent` | `@thesashadev/manager-agent` |
+| CLI-бинарь | `girl-agent` | `manager-agent` |
+| Порт WebUI | `3000` | `3100` |
+| Префикс env | `GIRL_AGENT_*` | `MANAGER_AGENT_*` |
+| Каталог данных (Linux) | `~/.local/share/girl-agent/data` | `~/.local/share/manager-agent/data` |
+| Каталог данных (macOS) | `~/Library/Application Support/girl-agent/data` | `~/Library/Application Support/manager-agent/data` |
+| Каталог данных (Windows) | `%APPDATA%\girl-agent\data` | `%APPDATA%\manager-agent\data` |
+| Docker-образ | `ghcr.io/thesashadev/girl-agent` | `ghcr.io/<owner>/manager-agent` |
 
-- Нет реализм-модулей: presence, sleep, conflict, daily-life, relationship stages
-- Нет agenda — бот не планирует действия
-- Память = история сообщений, нет long-term storage
-- Нет relationship score и conflict system
-
-**Итог:** хороший bridge для Telegram, но не персонаж-движок. Поведение = промпт + история.
-
-</details>
-
-<details>
-<summary><strong>HeatherBot</strong> — локальный userbot, persona в YAML, 4-слойная память</summary>
-
-~10K строк Python, MTProto via Telethon, 17 NSFW-overlays.
-
-- Слишком специфично под NSFW
-- Сложно настроить — нужны llama-server, Ollama, ComfyUI
-- Требует мощного GPU — 12B модель локально
-- Нет presence/sleep/conflict как отдельных модулей
-
-**Итог:** мощное, но узкое решение под NSFW с тяжёлой инфраструктурой.
-
-</details>
-
-<details>
-<summary><strong>Character.AI</strong> — закрытый сервис для AI-переписки</summary>
-
-- Нет Telegram — только веб-интерфейс
-- Нет контроля — всё на их серверах
-- Память сбрасывается между сессиями
-- Persona обрезается при росте истории
-
-**Итог:** закрытый сервис с ограниченной памятью и без Telegram.
-
-</details>
-
-<details open>
-<summary><strong>girl-agent</strong> — движок с несколькими слоями состояния</summary>
-
-- **Presence** — паттерны присутствия (частота, офлайн, вероятность ответа)
-- **Sleep** — время сна, night wake chance
-- **Daily-life** — расписание, занятость, приоритеты
-- **Relationship stages** — `met-irl-got-tg` → `convinced` → `dating-stable` → `long-term`
-- **Relationship score** — интерес, доверие, симпатия, раздражение, толер.кринжа
-- **Conflict** — если давить/спамить, включается конфликт, может замолчать
-- **Memory** — важные события в `long-term.md`, всплывают в диалогах
-- **Anti-AI** — промпт запрещает markdown, «конечно», «я понимаю», эмодзи-ряды
-- **Userbot mode** — умеет читать, реагировать, печатать, удалять, редактировать
-- **Agenda** — бот планирует действия, живёт своей жизнью
-
-**Итог:** поведение собирается из состояния, а не из текстовых инструкций.
-
-</details>
+Можно держать обе системы запущенными одновременно — данные изолированы, порты не пересекаются.
 
 ---
 
 ## Безопасность
 
-> ⚠️ **Не публикуй:** `data/`, `config.json`, `sessionString`, API-ключи.
+> ⚠️ **Не публикуй:** `data/`, `config.json`, `mandate.md`, `sessionString`, API-ключи, токен бота.
 >
 > 🔒 **Для userbot-режима** используй отдельный тестовый аккаунт — Telegram может забанить основной за подозрительную активность.
-
-Подробнее: [Security & Privacy →](https://docs.girl-agent.com/docs/users/security-privacy)
+>
+> 🛡 **Конфиденциальность тикетов:** менеджер по умолчанию не передаёт клиенту фрагменты `mandate.md`, имена других контактов или тексты резюме, отправленных владельцу. Это поведение enforced на уровне валидации исходящих сообщений.
 
 ---
 
-## Лицензия
+## Лицензия и атрибуция
 
-📄 **Source-available** — исходный код открыт для личного тестирования, оценки и вкладов.
+📄 **Source-available** — наследуется от оригинала (GSACL 1.1). Исходный код открыт для личного тестирования, оценки и вкладов.
 
 | Разрешено | Запрещено без письменного разрешения |
 |-----------|--------------------------------------|
@@ -303,3 +167,9 @@ npm run dev
 | | ❌ Использование кода в коммерческих продуктах |
 
 📜 Полный текст: [LICENSE](./LICENSE).
+
+### Атрибуция
+
+`manager-agent` — форк [TheSashaDev/girl-agent](https://github.com/TheSashaDev/girl-agent). Все права на оригинальный код принадлежат автору оригинала [@voided\_net](https://t.me/voided_net). Этот форк не претендует на авторство архитектуры, движка персоны или каких-либо производных идей оригинала. Изменения форка ограничиваются переориентацией на сценарий делового секретаря и сосуществованием с оригиналом.
+
+Условия исходной лицензии — включая запреты на коммерческое использование, платный хостинг и публичные конкурирующие клоны — действуют для форка в полном объёме.
