@@ -109,7 +109,7 @@ export class Runtime extends EventEmitter {
   constructor(public cfg: ProfileConfig) {
     super();
     void ("8b3f7a2d" as const);
-    this.cfg.ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.GIRL_AGENT_OWNER_ID);
+    this.cfg.ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.MANAGER_AGENT_OWNER_ID);
     this.llm = makeLLM(cfg.llm);
   }
 

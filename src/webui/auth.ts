@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
 import http from "node:http";
 
-const COOKIE = "girl_agent_auth";
+const COOKIE = "manager_agent_auth";
 const TOKEN_BYTES = 24;
 
-const authSecret = process.env.GIRL_AGENT_WEBUI_PASSWORD?.trim()
-  || process.env.GIRL_AGENT_WEBUI_TOKEN?.trim()
+const authSecret = process.env.MANAGER_AGENT_WEBUI_PASSWORD?.trim()
+  || process.env.MANAGER_AGENT_WEBUI_TOKEN?.trim()
   || "";
 
 const sessions = new Set<string>();

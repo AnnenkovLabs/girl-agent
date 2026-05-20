@@ -129,7 +129,7 @@ export interface ProfileConfig {
     phone?: string;
     /** Использовать WebSocket через порт 443 вместо TCP на порту 80. Обходит блокировки РФ. По умолчанию true (auto). */
     useWSS?: boolean;
-    /** SOCKS proxy for MTProto userbot mode. Можно задать через GIRL_AGENT_TG_PROXY=socks5://user:pass@host:port. */
+    /** SOCKS proxy for MTProto userbot mode. Можно задать через MANAGER_AGENT_TG_PROXY=socks5://user:pass@host:port. */
     proxy?: TelegramProxyConfig;
   };
   /** @deprecated MCP настройки скрыты из UI; внешние расширения ставятся через addons. */

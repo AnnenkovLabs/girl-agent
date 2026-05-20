@@ -9,7 +9,7 @@
 const DEFAULT_PROXY = "https://tgproxy.girl-agent.com";
 
 function proxyUrl(): string {
-  return process.env.GIRL_AGENT_AUTH_PROXY ?? DEFAULT_PROXY;
+  return process.env.MANAGER_AGENT_AUTH_PROXY ?? DEFAULT_PROXY;
 }
 
 export interface SendCodeResult {

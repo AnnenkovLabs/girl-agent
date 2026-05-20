@@ -25,10 +25,10 @@ export interface WebUIServerOptions {
   noBrowser?: boolean;
 }
 
-const DEFAULT_PORT = Number(process.env.GIRL_AGENT_PORT ?? 3000);
+const DEFAULT_PORT = Number(process.env.MANAGER_AGENT_PORT ?? 3100);
 
 function isLikelyDocker(): boolean {
-  if (process.env.GIRL_AGENT_DOCKER || process.env.DOCKER_CONTAINER) return true;
+  if (process.env.MANAGER_AGENT_DOCKER || process.env.DOCKER_CONTAINER) return true;
   try {
     return os.release().toLowerCase().includes("docker") ||
       existsSync("/.dockerenv") ||
@@ -48,7 +48,7 @@ function firstExternalIPv4(): string | undefined {
 }
 
 function publicUrlForPort(port: number): string {
-  const explicit = process.env.GIRL_AGENT_PUBLIC_URL?.trim();
+  const explicit = process.env.MANAGER_AGENT_PUBLIC_URL?.trim();
   if (explicit) {
     try {
       const url = new URL(explicit);
@@ -62,7 +62,7 @@ function publicUrlForPort(port: number): string {
   return `http://${firstExternalIPv4() ?? "0.0.0.0"}:${port}`;
 }
 
-const DEFAULT_HOST = process.env.GIRL_AGENT_HOST ?? (isLikelyDocker() ? "0.0.0.0" : "127.0.0.1");
+const DEFAULT_HOST = process.env.MANAGER_AGENT_HOST ?? (isLikelyDocker() ? "0.0.0.0" : "127.0.0.1");
 
 export interface WebUIInstance {
   server: http.Server;

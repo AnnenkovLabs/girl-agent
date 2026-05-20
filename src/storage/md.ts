@@ -8,14 +8,14 @@ import { normalizeCommunicationProfile, normalizeIgnoreTendency } from "../prese
 /**
  * Корневая директория профилей.
  *
- * Можно переопределить через `GIRL_AGENT_DATA` (используется десктоп-обвязкой,
- * чтобы хранить данные в `%APPDATA%/girl-agent/data` или `~/.local/share/...`).
+ * Можно переопределить через `MANAGER_AGENT_DATA` (используется десктоп-обвязкой,
+ * чтобы хранить данные в `%APPDATA%/manager-agent/data` или `~/.local/share/...`).
  * По-умолчанию:
  * - в исходниках проекта — `./data`;
  * - при запуске через npx/глобальный бинарь из произвольной папки — XDG data dir.
  */
-export const DATA_ROOT = process.env.GIRL_AGENT_DATA
-  ? path.resolve(process.env.GIRL_AGENT_DATA)
+export const DATA_ROOT = process.env.MANAGER_AGENT_DATA
+  ? path.resolve(process.env.MANAGER_AGENT_DATA)
   : defaultDataRoot();
 
 function canWriteDir(dir: string): boolean {
@@ -32,22 +32,22 @@ function defaultDataRoot(): string {
   const cwd = process.cwd();
   const projectData = path.resolve(cwd, "data");
   if (looksLikeProjectRoot(cwd) && canWriteDir(path.dirname(projectData))) return projectData;
-  // Issue #72: на Windows храним в %APPDATA%\\girl-agent\\data — это ожидаемое
+  // На Windows храним в %APPDATA%\\manager-agent\\data — это ожидаемое
   // место для конфига npm-приложений, при отсутствии XDG.
   if (process.platform === "win32") {
     const appdata = process.env.APPDATA
       ? path.resolve(process.env.APPDATA)
       : path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(appdata, "girl-agent", "data");
+    return path.join(appdata, "manager-agent", "data");
   }
-  // macOS: ~/Library/Application Support/girl-agent/data (если не задан XDG)
+  // macOS: ~/Library/Application Support/manager-agent/data (если не задан XDG)
   if (process.platform === "darwin" && !process.env.XDG_DATA_HOME) {
-    return path.join(os.homedir(), "Library", "Application Support", "girl-agent", "data");
+    return path.join(os.homedir(), "Library", "Application Support", "manager-agent", "data");
   }
   const xdg = process.env.XDG_DATA_HOME
     ? path.resolve(process.env.XDG_DATA_HOME)
     : path.join(os.homedir(), ".local", "share");
-  return path.join(xdg, "girl-agent", "data");
+  return path.join(xdg, "manager-agent", "data");
 }
 
 function looksLikeProjectRoot(dir: string): boolean {
@@ -111,7 +111,7 @@ export async function readConfig(slug: string): Promise<ProfileConfig | null> {
 
 export async function writeConfig(cfg: ProfileConfig): Promise<void> {
   await ensureProfile(cfg.slug);
-  const ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.GIRL_AGENT_OWNER_ID);
+  const ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.MANAGER_AGENT_OWNER_ID);
   const normalized = ownerId === undefined
     ? { ...cfg, ownerId: undefined, ignoreTendency: normalizeIgnoreTendency(cfg.ignoreTendency) }
     : { ...cfg, ownerId, ignoreTendency: normalizeIgnoreTendency(cfg.ignoreTendency) };

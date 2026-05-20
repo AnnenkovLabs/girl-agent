@@ -33,7 +33,7 @@ usage:
   npx girl-agent                       # запустить WebUI и открыть http://localhost:3000
   npx girl-agent --port=8080           # кастомный порт
   npx girl-agent --host=0.0.0.0        # слушать на всех интерфейсах
-  GIRL_AGENT_PUBLIC_URL=https://example.com npx girl-agent  # URL для reverse proxy/docker
+  MANAGER_AGENT_PUBLIC_URL=https://example.com npx girl-agent  # URL для reverse proxy/docker
   npx girl-agent --no-browser          # не открывать браузер автоматически
   npx girl-agent --profile=<slug>      # запустить WebUI и сразу запустить указанный профиль
 
@@ -168,8 +168,8 @@ async function main(): Promise<void> {
   }
 
   // ===== WebUI entrypoint =====
-  const port = Number(argv.port ?? process.env.GIRL_AGENT_PORT ?? 3000);
-  const host = String(argv.host ?? process.env.GIRL_AGENT_HOST ?? "127.0.0.1");
+  const port = Number(argv.port ?? process.env.MANAGER_AGENT_PORT ?? 3100);
+  const host = String(argv.host ?? process.env.MANAGER_AGENT_HOST ?? "127.0.0.1");
 
   const instance = await startWebUIServer({
     port,
@@ -266,7 +266,7 @@ async function buildConfigFromFlags(argv: Record<string, unknown>): Promise<Prof
           phone: String(argv.phone ?? "")
         },
     privacy,
-    ownerId: normalizeOwnerId(argv["owner-id"] ?? process.env.GIRL_AGENT_OWNER_ID),
+    ownerId: normalizeOwnerId(argv["owner-id"] ?? process.env.MANAGER_AGENT_OWNER_ID),
     createdAt: new Date().toISOString(),
     sleepFrom: 23,
     sleepTo: 8,
@@ -352,7 +352,7 @@ function personaNotesForGeneration(cfg: ProfileConfig): string {
 }
 
 async function tryOpenBrowser(url: string): Promise<void> {
-  if (process.env.GIRL_AGENT_NO_BROWSER || process.env.NO_BROWSER) return;
+  if (process.env.MANAGER_AGENT_NO_BROWSER || process.env.NO_BROWSER) return;
   const platform = os.platform();
   let cmd = "";
   if (platform === "darwin") cmd = `open "${url}"`;

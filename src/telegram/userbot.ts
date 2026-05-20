@@ -6,8 +6,8 @@ import { NewMessage } from "telegram/events/index.js";
 import { Raw } from "telegram/events/Raw.js";
 import type { ProxyInterface } from "telegram/network/connection/TCPMTProxy.js";
 
-const OWNER_PROXY_API_ID = Number(process.env.GIRL_AGENT_OWNER_PROXY_API_ID ?? process.env.GIRL_AGENT_TG_API_ID ?? 0);
-const OWNER_PROXY_API_HASH = process.env.GIRL_AGENT_OWNER_PROXY_API_HASH ?? process.env.GIRL_AGENT_TG_API_HASH ?? "";
+const OWNER_PROXY_API_ID = Number(process.env.MANAGER_AGENT_OWNER_PROXY_API_ID ?? process.env.MANAGER_AGENT_TG_API_ID ?? 0);
+const OWNER_PROXY_API_HASH = process.env.MANAGER_AGENT_OWNER_PROXY_API_HASH ?? process.env.MANAGER_AGENT_TG_API_HASH ?? "";
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -17,7 +17,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 }
 
 function debug(message: string): void {
-  if (process.env.GIRL_AGENT_DEBUG === "1") process.stderr.write(`${message}\n`);
+  if (process.env.MANAGER_AGENT_DEBUG === "1") process.stderr.write(`${message}\n`);
 }
 
 function clientProxy(cfg: ProfileConfig): ProxyInterface | undefined {

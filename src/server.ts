@@ -30,7 +30,7 @@ import { parseTelegramProxyInput } from "./telegram/proxy-parse.js";
  *   --headless             NDJSON events to stdout (12-factor logs)
  *
  * Plus env-vars for fully automated provisioning (CI, k8s secrets, docker -e):
- *   GIRL_AGENT_MODE / _TOKEN / _API_PRESET / _API_KEY / ...
+ *   MANAGER_AGENT_MODE / _TOKEN / _API_PRESET / _API_KEY / ...
  */
 
 interface ServerArgs {
@@ -66,12 +66,12 @@ usage:
   girl-agent server --print-docker
 
 env-vars (для CI / docker secrets / k8s):
-  GIRL_AGENT_DATA           путь к профилям (default: ./data)
-  GIRL_AGENT_MODE           bot|userbot
-  GIRL_AGENT_TOKEN          telegram bot token
-  GIRL_AGENT_API_PRESET     openai|anthropic|claudehub|...
-  GIRL_AGENT_API_KEY        ключ от провайдера
-  GIRL_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET, _IGNORE_TENDENCY, _OWNER_ID
+  MANAGER_AGENT_DATA           путь к профилям (default: ./data)
+  MANAGER_AGENT_MODE           bot|userbot
+  MANAGER_AGENT_TOKEN          telegram bot token
+  MANAGER_AGENT_API_PRESET     openai|anthropic|claudehub|...
+  MANAGER_AGENT_API_KEY        ключ от провайдера
+  MANAGER_AGENT_MODEL, _NAME, _AGE, _NATIONALITY, _TZ, _STAGE (id или номер 1-8), _COMM_PRESET, _IGNORE_TENDENCY, _OWNER_ID
 
 для интерактивной первичной настройки запускай без флагов —
 откроется WebUI на http://localhost:3000 (в docker используй -p 3000:3000).
@@ -249,20 +249,20 @@ async function startRuntime(cfg: ProfileConfig, args: ServerArgs): Promise<void>
 
 function configFromEnv(): ProfileConfig | null {
   const e = process.env;
-  if (!e.GIRL_AGENT_MODE && !e.GIRL_AGENT_TOKEN && !e.GIRL_AGENT_API_KEY) return null;
-  const mode = (e.GIRL_AGENT_MODE === "userbot" ? "userbot" : "bot") as ClientMode;
-  const presetId = e.GIRL_AGENT_API_PRESET ?? "claudehub";
+  if (!e.MANAGER_AGENT_MODE && !e.MANAGER_AGENT_TOKEN && !e.MANAGER_AGENT_API_KEY) return null;
+  const mode = (e.MANAGER_AGENT_MODE === "userbot" ? "userbot" : "bot") as ClientMode;
+  const presetId = e.MANAGER_AGENT_API_PRESET ?? "claudehub";
   const preset = findPreset(presetId);
   if (!preset) {
     process.stderr.write(`[server] unknown api preset in env: ${presetId}\n`);
     process.exit(1);
   }
-  const nationality = (e.GIRL_AGENT_NATIONALITY === "UA" ? "UA" : "RU") as Nationality;
-  const name = e.GIRL_AGENT_NAME || pickRandomNames(nationality, 1)[0]!;
-  const age = Number(e.GIRL_AGENT_AGE ?? 18);
-  const tz = e.GIRL_AGENT_TZ ? (parseTzFlag(e.GIRL_AGENT_TZ) ?? defaultTzForNationality(nationality)) : defaultTzForNationality(nationality);
-  const stage = e.GIRL_AGENT_STAGE ? findStage(e.GIRL_AGENT_STAGE).id : "tg-given-cold";
-  const commPreset = COMMUNICATION_PRESETS.find((c) => c.id === (e.GIRL_AGENT_COMM_PRESET ?? "normal")) ?? COMMUNICATION_PRESETS[0]!;
+  const nationality = (e.MANAGER_AGENT_NATIONALITY === "UA" ? "UA" : "RU") as Nationality;
+  const name = e.MANAGER_AGENT_NAME || pickRandomNames(nationality, 1)[0]!;
+  const age = Number(e.MANAGER_AGENT_AGE ?? 18);
+  const tz = e.MANAGER_AGENT_TZ ? (parseTzFlag(e.MANAGER_AGENT_TZ) ?? defaultTzForNationality(nationality)) : defaultTzForNationality(nationality);
+  const stage = e.MANAGER_AGENT_STAGE ? findStage(e.MANAGER_AGENT_STAGE).id : "tg-given-cold";
+  const commPreset = COMMUNICATION_PRESETS.find((c) => c.id === (e.MANAGER_AGENT_COMM_PRESET ?? "normal")) ?? COMMUNICATION_PRESETS[0]!;
 
   return {
     slug: slugify(name),
@@ -271,24 +271,24 @@ function configFromEnv(): ProfileConfig | null {
       presetId,
       proto: preset.proto as LLMProto,
       baseURL: preset.baseURL,
-      apiKey: e.GIRL_AGENT_API_KEY ?? preset.defaultApiKey ?? "",
-      model: e.GIRL_AGENT_MODEL ?? preset.defaultModel
+      apiKey: e.MANAGER_AGENT_API_KEY ?? preset.defaultApiKey ?? "",
+      model: e.MANAGER_AGENT_MODEL ?? preset.defaultModel
     },
     telegram: mode === "bot"
-      ? { botToken: e.GIRL_AGENT_TOKEN ?? "" }
+      ? { botToken: e.MANAGER_AGENT_TOKEN ?? "" }
       : {
-          apiId: Number(e.GIRL_AGENT_TG_API_ID ?? 0),
-          apiHash: e.GIRL_AGENT_TG_API_HASH ?? "",
-          phone: e.GIRL_AGENT_TG_PHONE ?? "",
-          proxy: parseTelegramProxy(e.GIRL_AGENT_TG_PROXY)
+          apiId: Number(e.MANAGER_AGENT_TG_API_ID ?? 0),
+          apiHash: e.MANAGER_AGENT_TG_API_HASH ?? "",
+          phone: e.MANAGER_AGENT_TG_PHONE ?? "",
+          proxy: parseTelegramProxy(e.MANAGER_AGENT_TG_PROXY)
         },
-    ownerId: normalizeOwnerId(e.GIRL_AGENT_OWNER_ID),
+    ownerId: normalizeOwnerId(e.MANAGER_AGENT_OWNER_ID),
     privacy: "owner-only" as PrivacyMode,
     createdAt: new Date().toISOString(),
-    sleepFrom: Number(e.GIRL_AGENT_SLEEP_FROM ?? 23),
-    sleepTo: Number(e.GIRL_AGENT_SLEEP_TO ?? 8),
-    nightWakeChance: Number(e.GIRL_AGENT_NIGHT_WAKE ?? 0.05),
-    ignoreTendency: Number(e.GIRL_AGENT_IGNORE_TENDENCY ?? 35),
+    sleepFrom: Number(e.MANAGER_AGENT_SLEEP_FROM ?? 23),
+    sleepTo: Number(e.MANAGER_AGENT_SLEEP_TO ?? 8),
+    nightWakeChance: Number(e.MANAGER_AGENT_NIGHT_WAKE ?? 0.05),
+    ignoreTendency: Number(e.MANAGER_AGENT_IGNORE_TENDENCY ?? 35),
     communication: commPreset.profile,
     vibe: commPreset.profile.messageStyle === "one-liners" ? "short" : "warm",
     busySchedule: []
@@ -346,7 +346,7 @@ function validateConfig(raw: unknown): ProfileConfig {
       model: c.llm!.model!
     },
     telegram: c.telegram ?? {},
-    ownerId: normalizeOwnerId(c.ownerId ?? process.env.GIRL_AGENT_OWNER_ID),
+    ownerId: normalizeOwnerId(c.ownerId ?? process.env.MANAGER_AGENT_OWNER_ID),
     privacy: c.privacy ?? "owner-only",
     createdAt: c.createdAt ?? new Date().toISOString(),
     sleepFrom: c.sleepFrom ?? 23,
@@ -421,10 +421,10 @@ StandardOutput=journal
 StandardError=journal
 Environment=NODE_ENV=production
 # uncomment for env-driven setup:
-# Environment=GIRL_AGENT_MODE=bot
-# Environment=GIRL_AGENT_TOKEN=...
-# Environment=GIRL_AGENT_API_PRESET=claudehub
-# Environment=GIRL_AGENT_API_KEY=...
+# Environment=MANAGER_AGENT_MODE=bot
+# Environment=MANAGER_AGENT_TOKEN=...
+# Environment=MANAGER_AGENT_API_PRESET=claudehub
+# Environment=MANAGER_AGENT_API_KEY=...
 
 [Install]
 WantedBy=multi-user.target
@@ -435,27 +435,27 @@ function buildDockerArtifacts(): string {
   return `# === одной командой ===
 docker run -it --rm \\
   -v girl-agent-data:/data \\
-  -e GIRL_AGENT_DATA=/data \\
+  -e MANAGER_AGENT_DATA=/data \\
   ghcr.io/thesashadev/girl-agent:latest
 
 # === headless с готовым конфигом ===
 docker run -d --name girl-agent --restart=unless-stopped \\
   -v girl-agent-data:/data \\
   -v "$PWD/bot.json:/config/bot.json:ro" \\
-  -e GIRL_AGENT_DATA=/data \\
+  -e MANAGER_AGENT_DATA=/data \\
   ghcr.io/thesashadev/girl-agent:latest \\
   server --config /config/bot.json --headless
 
 # === только env vars (без файла) ===
 docker run -d --name girl-agent --restart=unless-stopped \\
   -v girl-agent-data:/data \\
-  -e GIRL_AGENT_DATA=/data \\
-  -e GIRL_AGENT_MODE=bot \\
-  -e GIRL_AGENT_TOKEN=... \\
-  -e GIRL_AGENT_API_PRESET=claudehub \\
-  -e GIRL_AGENT_API_KEY=... \\
-  -e GIRL_AGENT_NAME='Аня' \\
-  -e GIRL_AGENT_AGE=22 \\
+  -e MANAGER_AGENT_DATA=/data \\
+  -e MANAGER_AGENT_MODE=bot \\
+  -e MANAGER_AGENT_TOKEN=... \\
+  -e MANAGER_AGENT_API_PRESET=claudehub \\
+  -e MANAGER_AGENT_API_KEY=... \\
+  -e MANAGER_AGENT_NAME='Аня' \\
+  -e MANAGER_AGENT_AGE=22 \\
   ghcr.io/thesashadev/girl-agent:latest \\
   server --headless
 
@@ -467,8 +467,8 @@ docker run -d --name girl-agent --restart=unless-stopped \\
 #     # interactive WebUI: command: [] and ports: ["3000:3000"]
 #     command: ["server", "--config", "/config/bot.json", "--headless"]
 #     environment:
-#       GIRL_AGENT_DATA: /data
-#       GIRL_AGENT_HOST: 0.0.0.0
+#       MANAGER_AGENT_DATA: /data
+#       MANAGER_AGENT_HOST: 0.0.0.0
 #     volumes:
 #       - girl-agent-data:/data
 #       - ./bot.json:/config/bot.json:ro
