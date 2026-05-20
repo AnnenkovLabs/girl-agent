@@ -63,11 +63,13 @@ async function writeMigrationState(state: MigrationState): Promise<void> {
 import { migration0112 } from "./0112-add-use-wss-default.js";
 import { migration0113 } from "./0113-ensure-communication-md.js";
 import { migration0114 } from "./0114-memory-palace.js";
+import { migration0115 } from "./0115-manager-mode.js";
 
 export const ALL_MIGRATIONS: Migration[] = [
   migration0112,
   migration0113,
   migration0114,
+  migration0115,
 ];
 
 /**
@@ -203,7 +205,7 @@ function currentVersion(): string {
       const candidate = path.join(dir, "package.json");
       try {
         const pkg = JSON.parse(readFileSync(candidate, "utf8")) as { name?: string; version?: string };
-        if (pkg.name === "@thesashadev/girl-agent" && pkg.version) return pkg.version;
+        if (pkg.name === "@thesashadev/manager-agent" && pkg.version) return pkg.version;
       } catch { /* next */ }
       dir = path.dirname(dir);
     }
