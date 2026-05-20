@@ -243,3 +243,109 @@ export const ESCALATION_INTERNALS = {
   FALLBACK_SUMMARY,
   SUMMARY_MAX_LEN
 };
+
+
+// ============================================================================
+// Escalation timers (Task 4.6 manager-mode tasks.md, Requirement 5).
+//
+// `tickEscalationTimeouts` запускается из runtime'а раз в 60 секунд. Чистый
+// функционал: возвращает планируемые действия (notify-client, close), а
+// runtime сам шлёт сообщение и сохраняет тикет на диск. Это разделение
+// упрощает unit-тесты — мы не дёргаем Telegram и fs.
+// ============================================================================
+
+const ESCALATION_NOTIFY_MIN_LEN = 20;
+const ESCALATION_NOTIFY_MAX_LEN = 200;
+const BOSS_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 часа
+const CLIENT_CONFIRM_TIMEOUT_MS = 600 * 1000; // 600 секунд
+
+export type EscalationTimerAction =
+  | { kind: "notify-timeout"; ticketId: string; chatId: string; text: string }
+  | { kind: "close-boss-timeout"; ticketId: string }
+  | { kind: "close-client-confirm"; ticketId: string };
+
+export interface TickEscalationTimeoutsOptions {
+  /** Текущее время (для тестов). */
+  now?: Date;
+  /** `escalationTimeoutMin` из ProfileConfig. */
+  escalationTimeoutMin: number;
+  /** Готовый текст уведомления (длина 20..200, без emoji/md). */
+  notifyText?: string;
+}
+
+export interface TickEscalationTimeoutsResult {
+  actions: EscalationTimerAction[];
+  /** Тикеты, в которых нужно поставить флаг `timeoutNotified=true`. */
+  flagNotified: string[];
+}
+
+/**
+ * Сухой шаг таймера. На входе текущий `TicketsFile`, на выходе план действий.
+ * Caller (runtime) применяет план: шлёт сообщение клиенту/боссу, обновляет
+ * `timeoutNotified` или закрывает тикет, сохраняет файл.
+ */
+export function tickEscalationTimeouts(
+  file: TicketsFile,
+  opts: TickEscalationTimeoutsOptions
+): TickEscalationTimeoutsResult {
+  const now = opts.now ?? new Date();
+  const escalationTimeoutMs = clampMinutes(opts.escalationTimeoutMin) * 60 * 1000;
+  const text = sanitizeNotify(opts.notifyText);
+
+  const actions: EscalationTimerAction[] = [];
+  const flag: string[] = [];
+
+  for (const t of file.tickets) {
+    const created = parseDate(t.createdAt);
+    if (t.state === "waiting-boss" && created) {
+      const elapsed = now.getTime() - created.getTime();
+      if (!t.timeoutNotified && elapsed >= escalationTimeoutMs) {
+        actions.push({ kind: "notify-timeout", ticketId: t.id, chatId: t.chatId, text });
+        flag.push(t.id);
+      }
+      if (elapsed >= BOSS_TIMEOUT_MS) {
+        actions.push({ kind: "close-boss-timeout", ticketId: t.id });
+      }
+    }
+    if (t.state === "answered") {
+      const ans = parseDate(t.bossReplyAt ?? t.createdAt);
+      if (ans && now.getTime() - ans.getTime() >= CLIENT_CONFIRM_TIMEOUT_MS) {
+        actions.push({ kind: "close-client-confirm", ticketId: t.id });
+      }
+    }
+  }
+
+  return { actions, flagNotified: flag };
+}
+
+function parseDate(s?: string): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+function clampMinutes(v: number): number {
+  if (!Number.isFinite(v)) return 240;
+  return Math.max(5, Math.min(1440, Math.floor(v)));
+}
+
+function sanitizeNotify(t: string | undefined): string {
+  const fallback = "ваш менеджер сейчас уточняет ответ, отвечу позже";
+  const candidate = (t ?? "").trim();
+  // Убираем markdown-разметку и эмодзи (упрощённо — только базовые маркеры).
+  const stripped = candidate
+    .replace(/[*_`>#~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (stripped.length >= ESCALATION_NOTIFY_MIN_LEN && stripped.length <= ESCALATION_NOTIFY_MAX_LEN) {
+    return stripped;
+  }
+  return fallback;
+}
+
+export const ESCALATION_TIMER_INTERNALS = {
+  ESCALATION_NOTIFY_MIN_LEN,
+  ESCALATION_NOTIFY_MAX_LEN,
+  BOSS_TIMEOUT_MS,
+  CLIENT_CONFIRM_TIMEOUT_MS
+};
