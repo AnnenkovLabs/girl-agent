@@ -397,3 +397,107 @@ export async function writeAgenda(slug: string, items: AgendaItem[]): Promise<vo
   await ensureProfile(slug);
   await fs.writeFile(path.join(profileDir(slug), "agenda.json"), JSON.stringify(items, null, 2), "utf8");
 }
+
+
+// ============================================================================
+// Manager-mode: contacts storage (Task 3.4 .kiro/specs/manager-mode/tasks.md).
+//
+// Каждый контакт хранится в `data/<slug>/contacts/<chatId>.json` как
+// `ContactRecord`. Запись атомарна (write-temp + rename), чтение лояльно к
+// отсутствию файла, листинг возвращает уже распарсенные записи. Round-trip
+// тест в `src/__tests__/storage/contacts.spec.ts` (Property 6).
+// ============================================================================
+
+import type { ContactRecord, Tier } from "../types.js";
+
+const VALID_TIERS: ReadonlyArray<Tier> = [
+  "cold-stranger",
+  "introduced",
+  "regular",
+  "trusted-partner",
+  "vip",
+  "blocked"
+];
+
+function contactsDir(slug: string): string {
+  return path.join(profileDir(slug), "contacts");
+}
+
+function contactFile(slug: string, chatId: string): string {
+  // chatId уже строка; на всякий случай нормализуем подозрительные символы.
+  const safe = chatId.replace(/[^A-Za-z0-9_-]/g, "_");
+  return path.join(contactsDir(slug), `${safe}.json`);
+}
+
+async function atomicWriteJson(file: string, data: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
+  await fs.rename(tmp, file);
+}
+
+function isValidContact(raw: unknown): raw is ContactRecord {
+  if (!raw || typeof raw !== "object") return false;
+  const r = raw as Partial<ContactRecord>;
+  if (typeof r.chatId !== "string" || r.chatId.length === 0) return false;
+  if (!r.tier || !VALID_TIERS.includes(r.tier)) return false;
+  if (typeof r.manualOverride !== "boolean") return false;
+  if (typeof r.createdAt !== "string" || typeof r.updatedAt !== "string") return false;
+  if (!r.score || typeof r.score !== "object") return false;
+  const s = r.score as Partial<ContactRecord["score"]>;
+  for (const k of ["relevance", "trust", "urgency", "annoyance", "spamScore"] as const) {
+    if (typeof s[k] !== "number" || !Number.isFinite(s[k])) return false;
+  }
+  return true;
+}
+
+/**
+ * Загружает контакт по `chatId`. Возвращает `null` если файл не существует
+ * или содержит невалидную структуру.
+ */
+export async function loadContact(slug: string, chatId: string): Promise<ContactRecord | null> {
+  try {
+    const raw = await fs.readFile(contactFile(slug, chatId), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!isValidContact(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Сохраняет контакт атомарно (write-temp + rename). */
+export async function saveContact(slug: string, contact: ContactRecord): Promise<void> {
+  if (!isValidContact(contact)) {
+    throw new Error(`invalid contact: ${JSON.stringify(contact).slice(0, 200)}`);
+  }
+  await atomicWriteJson(contactFile(slug, contact.chatId), contact);
+}
+
+/** Список контактов профиля (только валидные). */
+export async function listContacts(slug: string): Promise<ContactRecord[]> {
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(contactsDir(slug));
+  } catch {
+    return [];
+  }
+  const out: ContactRecord[] = [];
+  for (const name of entries) {
+    if (!name.endsWith(".json")) continue;
+    const chatId = name.slice(0, -".json".length);
+    const c = await loadContact(slug, chatId);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+/** Удаляет файл контакта. No-op если файла нет. */
+export async function deleteContact(slug: string, chatId: string): Promise<void> {
+  try {
+    await fs.unlink(contactFile(slug, chatId));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e;
+  }
+}
