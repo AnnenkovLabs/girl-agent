@@ -7,7 +7,7 @@ import { applyMoodDelta, maybeReflect } from "./reflect.js";
 import {
   appendSessionLog, appendSharedMemory, readRelationship, writeRelationship, writeConfig, writeMd,
   readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId, profileDir,
-  subscribeConfig, type ConfigSubscription
+  subscribeConfig, type ConfigSubscription, type AgendaItem
 } from "../storage/md.js";
 import { evaluateGate, type GateContact } from "./gate.js";
 import { upsertOnIncoming as upsertContactOnIncoming, isBlocked as isContactBlocked } from "./contacts.js";
@@ -17,7 +17,8 @@ import { findStage } from "./legacy-stage.js";
 import type { LegacyStageId as StageId } from "./legacy-stage.js";
 import { communicationProfileLabel, normalizeCommunicationProfile } from "../presets/communication.js";
 import { findPreset } from "../presets/llm.js";
-import { extractAgendaUpdates, dueAgendaItems, markAgendaFired, decideAfterProactiveResponse, ensureAutonomousAgenda, rescheduleAgenda, reconcileAgendaAfterConflict } from "./agenda.js";
+import { extractAgendaUpdates, dueAgendaItems, markAgendaFired, decideAfterProactiveResponse, ensureAutonomousAgenda, rescheduleAgenda, reconcileAgendaAfterConflict, agendaItemDirection } from "./agenda.js";
+import { composeDailyDigest, scheduleDigest, type ScheduleDigestHandle, markAgendaItemFailed } from "./digests.js";
 import { computePresenceProfile, computePresenceState, type PresenceProfile } from "./presence.js";
 import { decideOnlineHeartbeat } from "./online-tick.js";
 import { loadOrGenerateDailyLife, currentBlock, type DailyLife } from "./daily-life.js";
@@ -116,6 +117,11 @@ export class Runtime extends EventEmitter {
    */
   private configSubscription?: ConfigSubscription;
   /**
+   * Handle планировщика дайджеста боссу (Task 4.10 manager-mode, Req 9.2-9.3).
+   * Существует только при `cfg.proactiveBoss === true`. Закрывается в `stop()`.
+   */
+  private digestHandle?: ScheduleDigestHandle;
+  /**
    * Журнал моментов отправки агентом ответа клиенту в каждый чат, для
    * подсчёта ответов в окне 24 часа при `gateLevel=gated` (Req 17.4-17.5).
    * Хранятся unix-ms; чистка происходит при чтении.
@@ -174,6 +180,30 @@ export class Runtime extends EventEmitter {
         text: `config hot-reload: gateLevel=${this.cfg.gateLevel ?? "gated"} whitelist=${this.cfg.whitelist?.length ?? 0}`
       } as RuntimeEvent);
     });
+
+    // Дайджест боссу (Task 4.10 manager-mode, Requirement 9.2-9.3). Регистрируем
+    // только если `proactiveBoss=true` — иначе по Req 9.5 дайджест не шлётся.
+    // Ошибка отправки превращает дайджест в `failed`-пункт без авто-повтора.
+    if (this.cfg.proactiveBoss === true) {
+      try {
+        this.digestHandle = scheduleDigest({
+          tz: this.cfg.tz,
+          periodHours: this.cfg.digestPeriodHours,
+          digestTime: this.cfg.digestTime,
+          onTick: () => {
+            this.sendBossDigest().catch(e =>
+              this.emit("event", { type: "error", text: "digest: " + silentErrorLabel(e) } as RuntimeEvent)
+            );
+          }
+        });
+        this.emit("event", {
+          type: "info",
+          text: `digest scheduled: first=${this.digestHandle.schedule.firstFireAt} every=${this.digestHandle.schedule.periodHours}h`
+        } as RuntimeEvent);
+      } catch (e) {
+        this.emit("event", { type: "error", text: "digest schedule: " + (e as Error).message } as RuntimeEvent);
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -185,6 +215,8 @@ export class Runtime extends EventEmitter {
     this.pendingReplyDueAt.clear();
     this.configSubscription?.close();
     this.configSubscription = undefined;
+    this.digestHandle?.stop();
+    this.digestHandle = undefined;
     try {
       const made = await withTimeout(closeCurrentSession(this.llm, this.cfg), 3500);
       if (made) this.emit("event", { type: "info", text: "daily summary обновлена" } as RuntimeEvent);
@@ -1142,10 +1174,66 @@ export class Runtime extends EventEmitter {
 
   // ===== proactive scheduler =====
 
+  /**
+   * Отправляет дайджест боссу (Task 4.10 manager-mode, Requirement 9.2-9.3).
+   * Вызывается планировщиком `scheduleDigest` в каждый тик. Re-checks
+   * `proactiveBoss` — если флаг сброшен в hot-reload, тихо выходим (Req 9.5).
+   * Ошибка `tg.sendText` → пункт повестки идёт в `failed` без авто-повтора
+   * (Req 9.6); следующий дайджест будет создан штатным таймером.
+   */
+  private async sendBossDigest(): Promise<void> {
+    if (this.paused) return;
+    if (this.cfg.proactiveBoss !== true) return;
+    if (!this.cfg.ownerId) {
+      this.emit("event", { type: "error", text: "digest skipped: ownerId не задан" } as RuntimeEvent);
+      return;
+    }
+    const periodHours = clampDigestPeriodHoursLocal(this.cfg.digestPeriodHours);
+    const digest = await composeDailyDigest(this.cfg.slug, {
+      periodMs: periodHours * 60 * 60 * 1000
+    });
+    // Журналируем отправку как пункт повестки direction=boss с
+    // attempts=1, чтобы при ошибке адаптера однозначно пометить failed.
+    const itemId = `digest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const journalEntry: AgendaItem = {
+      id: itemId,
+      about: `digest open=${digest.counts.openTickets} wait=${digest.counts.waitingBoss} new=${digest.counts.newContacts}`,
+      pingAt: new Date().toISOString(),
+      reason: "boss daily digest",
+      importance: 1,
+      state: "fired",
+      attempts: 1,
+      chatId: this.cfg.ownerId,
+      createdAt: new Date().toISOString(),
+      history: [`digest fired at ${new Date().toISOString()}`],
+      direction: "boss"
+    };
+    const agenda = await readAgenda(this.cfg.slug);
+    agenda.push(journalEntry);
+    await writeAgenda(this.cfg.slug, agenda);
+
+    try {
+      await this.tg.sendText(this.cfg.ownerId, digest.text);
+      this.emit("event", {
+        type: "outgoing",
+        chatId: this.cfg.ownerId,
+        text: digest.text
+      } as RuntimeEvent);
+    } catch (e) {
+      await markAgendaItemFailed(this.cfg.slug, itemId, silentErrorLabel(e));
+      this.emit("event", {
+        type: "error",
+        text: "digest send failed: " + silentErrorLabel(e)
+      } as RuntimeEvent);
+    }
+  }
+
   private async tickAgenda(): Promise<void> {
     if (this.paused) return;
     if (this.cfg.stage === "dumped") return;
-    if (this.cfg.ownerId) {
+    // Manager-mode: при `proactiveClients=false` не планируем новых
+    // автономных пингов клиенту (Req 9.4).
+    if (this.cfg.ownerId && this.cfg.proactiveClients !== false) {
       const key = this.histKey(this.cfg.ownerId);
       const hist = await this.historyFor(key, this.cfg.ownerId, true);
       const conflict = await readConflict(this.cfg.slug);
@@ -1154,7 +1242,16 @@ export class Runtime extends EventEmitter {
         this.emit("event", { type: "info", text: `proactive planned: +${planned.created}` } as RuntimeEvent);
       }
     }
-    const due = await dueAgendaItems(this.cfg.slug);
+    const dueAll = await dueAgendaItems(this.cfg.slug);
+    // Не отправляем здесь боссовые пункты — для них отдельный планировщик
+    // дайджеста (Task 4.10). Клиентские пункты гейтим по `proactiveClients`
+    // (Req 9.4): explicit `false` блокирует follow-up.
+    const due = dueAll.filter(it => {
+      const dir = agendaItemDirection(it);
+      if (dir === "boss") return false;
+      if (this.cfg.proactiveClients === false) return false;
+      return true;
+    });
     if (!due.length) return;
     // По одному за тик чтобы не было «шквала» сообщений
     const item = due[0]!;
@@ -2058,4 +2155,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]).finally(() => {
     if (timer) clearTimeout(timer);
   });
+}
+
+/**
+ * Локальный помощник для дайджеста (Task 4.10): нормализует период в часах
+ * к диапазону 1..168, дефолт 24. Дублирует контракт `digests.ts` чтобы не
+ * экспортировать оттуда лишнее.
+ */
+function clampDigestPeriodHoursLocal(v: number | undefined): number {
+  if (!Number.isFinite(v as number)) return 24;
+  const n = Math.floor(v as number);
+  if (n < 1) return 1;
+  if (n > 168) return 168;
+  return n;
 }

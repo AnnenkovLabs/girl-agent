@@ -377,11 +377,22 @@ export interface AgendaItem {
   pingAt: string;              // ISO when she should ping
   reason: string;              // почему пишет ("узнать как прошло", "пожелать удачи")
   importance: 1 | 2 | 3;       // 1=обычное любопытство, 3=сильно переживает
-  state: "pending" | "fired" | "cancelled" | "rescheduled";
+  /**
+   * Состояние пункта повестки. `failed` добавлен под manager-mode (Task 4.10):
+   * пункт, у которого отправка через TG-адаптер вернула ошибку. `failed`
+   * никогда не повторяется автоматически — Requirement 9.6.
+   */
+  state: "pending" | "fired" | "cancelled" | "rescheduled" | "failed";
   attempts: number;            // сколько раз уже пинговала (для перепланировки)
   chatId: string | number;     // чат куда писать
   createdAt: string;
   history?: string[];          // лог событий по item ("user said отстань at ...")
+  /**
+   * Направление повестки (Task 4.10 manager-mode). `client` — follow-up
+   * клиенту; `boss` — дайджест боссу. Существующие записи без поля
+   * интерпретируются как `client` для обратной совместимости.
+   */
+  direction?: "client" | "boss";
 }
 
 export async function readAgenda(slug: string): Promise<AgendaItem[]> {

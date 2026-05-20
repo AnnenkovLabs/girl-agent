@@ -516,3 +516,40 @@ Reшение?`;
     return { decision: "satisfied", note: "fallback" };
   }
 }
+
+// ============================================================================
+// Manager-mode (Task 4.10): двусторонняя повестка с гейтингом по флагам
+// `proactiveClients` / `proactiveBoss` (Requirement 9.4-9.5).
+// ============================================================================
+
+/** Направление пункта повестки. Совпадает с `AgendaItem.direction`. */
+export type AgendaDirection = "client" | "boss";
+
+/**
+ * Возвращает направление пункта повестки. Записи без поля `direction`
+ * (созданные до Task 4.10) трактуются как клиентские для backward-compat.
+ */
+export function agendaItemDirection(item: AgendaItem): AgendaDirection {
+  return item.direction === "boss" ? "boss" : "client";
+}
+
+/**
+ * Фильтрует список due-пунктов, которым разрешена эмиссия по флагам.
+ *
+ * Семантика:
+ *  - `proactiveClients=false` блокирует все клиентские пункты (Req 9.4),
+ *    кроме тех, что относятся к активному тикету (`ticketId` присутствует
+ *    у пункта — на текущий момент в типе нет такого поля, поэтому
+ *    runtime отвечает за освобождение тикетных follow-up).
+ *  - `proactiveBoss=false` блокирует все боссовые пункты (Req 9.5).
+ */
+export function gateAgendaByFlags(
+  items: AgendaItem[],
+  flags: { proactiveClients?: boolean; proactiveBoss?: boolean }
+): AgendaItem[] {
+  return items.filter(it => {
+    const dir = agendaItemDirection(it);
+    if (dir === "client") return flags.proactiveClients === true;
+    return flags.proactiveBoss === true;
+  });
+}

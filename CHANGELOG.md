@@ -4,6 +4,10 @@
 
 ### Added
 
+- `engine/digests.ts` — `composeDailyDigest(slug)` собирает сводку по открытым тикетам, ожидающим босса и новым контактам за период (по `createdAt`); пишет ссылку `Inbox: /inbox/<slug>`. `scheduleDigest` принимает период 1..168 часов (дефолт 24h в 09:00 по `cfg.tz`) и `markAgendaItemFailed` помечает пункт как `failed` без авто-повтора (Task 4.10, Req 9).
+- `engine/agenda.ts:agendaItemDirection` / `gateAgendaByFlags` — двусторонняя повестка с гейтингом по `proactiveClients` / `proactiveBoss`. `AgendaItem.direction` (`client` | `boss`) расширяет существующее хранилище без миграции (старые записи трактуются как `client`).
+- `engine/digests.ts:schedulePromiseFollowUp` — идемпотентное планирование follow-up клиенту по обещанию; без `dueAtMs` ставит `now + 24h` (Req 9.1).
+- Wiring в `engine/runtime.ts`: при `proactiveBoss=true` стартует `scheduleDigest`, на тик отправляет дайджест через `tg.sendText(cfg.ownerId)`. Ошибка адаптера → пункт повестки идёт в `failed` без авто-повтора (Req 9.6). `tickAgenda` гейтит клиентские пункты по `proactiveClients`.
 - `engine/gate.ts` — чистая функция `evaluateGate` для ветвления входящих по `cfg.gateLevel` (`open` / `gated` / `whitelist`) с регистронезависимым матчингом whitelist по `chatId` и `@username`.
 - `storage/md.ts:subscribeConfig` — наблюдатель `config.json` через `fs.watch`, чтобы runtime подхватывал изменения `gateLevel` и `whitelist` без рестарта (≤5 секунд).
 - Wiring в `engine/runtime.ts:handleIncoming` для не-primary клиентов: `upsertOnIncoming` → `isBlocked` → `evaluateGate` с эмитом `ignored`/`info` для `block`/`force-escalate`.
