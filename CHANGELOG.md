@@ -7,6 +7,9 @@
 - `engine/gate.ts` — чистая функция `evaluateGate` для ветвления входящих по `cfg.gateLevel` (`open` / `gated` / `whitelist`) с регистронезависимым матчингом whitelist по `chatId` и `@username`.
 - `storage/md.ts:subscribeConfig` — наблюдатель `config.json` через `fs.watch`, чтобы runtime подхватывал изменения `gateLevel` и `whitelist` без рестарта (≤5 секунд).
 - Wiring в `engine/runtime.ts:handleIncoming` для не-primary клиентов: `upsertOnIncoming` → `isBlocked` → `evaluateGate` с эмитом `ignored`/`info` для `block`/`force-escalate`.
+- `engine/after-hours.ts` — чистый роутер `evaluateAfterHours` по `cfg.afterHoursPolicy` (`silent` / `auto-reply` / `vip-only`) с одноразовым auto-reply на off-окно (поле `lastAutoReplyAt`) и хелпер `computeOffWindowStart` для определения границ непрерывного нерабочего окна (Task 4.9, Req 8).
+- Wiring в `engine/runtime.ts:handleIncoming` после gate `allow` для не-primary клиентов: вне рабочих часов решение `silent` → ignored, `auto-reply` → одно сообщение + persist `lastAutoReplyAt`, `auto-reply-skip` → info, `normal` → продолжение flow.
+- Hot-reload `cfg.afterHoursPolicy` через существующий `subscribeConfig` (Task 4.8).
 
 ## 0.4.4
 

@@ -11,6 +11,8 @@ import {
 } from "../storage/md.js";
 import { evaluateGate, type GateContact } from "./gate.js";
 import { upsertOnIncoming as upsertContactOnIncoming, isBlocked as isContactBlocked } from "./contacts.js";
+import { evaluateAfterHours, snapshotAfterHours } from "./after-hours.js";
+import { saveContact, loadContact } from "../storage/md.js";
 import { findStage } from "./legacy-stage.js";
 import type { LegacyStageId as StageId } from "./legacy-stage.js";
 import { communicationProfileLabel, normalizeCommunicationProfile } from "../presets/communication.js";
@@ -351,6 +353,90 @@ export class Runtime extends EventEmitter {
     const media = describeIncomingMedia(m.media);
     if (!media) return m.text;
     return m.text ? `${media}\n${m.text}` : media;
+  }
+
+  /**
+   * Применяет `cfg.afterHoursPolicy` к не-primary входящему сообщению
+   * (Task 4.9 manager-mode, Requirement 8). Возвращает:
+   *  - `"handled"` — сообщение обработано (silent / auto-reply / skip),
+   *    caller должен `return` без дальнейшей обработки.
+   *  - `"continue"` — мы в рабочих часах или политика разрешила обычный flow
+   *    (например, vip-only для VIP-тира).
+   *
+   * Метод сам отправляет auto-reply через `tg.sendText`, обновляет
+   * `lastAutoReplyAt` контакта на диске и эмитит соответствующие события.
+   * Босс не доходит сюда: caller-страница ветви — non-primary path.
+   */
+  private async applyAfterHoursPolicy(m: IncomingMessage, key: string): Promise<"handled" | "continue"> {
+    const now = new Date();
+    const snapshot = snapshotAfterHours(this.cfg, now);
+    if (!snapshot.isOutOfHours) return "continue";
+
+    // Подгружаем контакт (может быть null, если файл повреждён или контакт не успел создаться).
+    let contact = await loadContact(this.cfg.slug, String(m.chatId)).catch(() => null);
+
+    const decision = evaluateAfterHours({
+      policy: this.cfg.afterHoursPolicy,
+      contact: contact ?? undefined,
+      isOutOfHours: snapshot.isOutOfHours,
+      now,
+      lastOutWindowStart: snapshot.lastOutWindowStart
+    });
+
+    if (decision.action === "normal") return "continue";
+
+    if (decision.action === "silent") {
+      this.emit("event", {
+        type: "ignored",
+        text: m.text,
+        chatId: m.chatId,
+        reason: "after-hours-silent"
+      } as RuntimeEvent);
+      return "handled";
+    }
+
+    if (decision.action === "auto-reply-skip") {
+      this.emit("event", {
+        type: "info",
+        text: `after-hours skip auto-reply (already replied in this off-window)`,
+        chatId: m.chatId,
+        reason: decision.reason
+      } as RuntimeEvent);
+      return "handled";
+    }
+
+    // decision.action === "auto-reply"
+    try {
+      await this.tg.sendText(m.chatId, decision.text);
+      this.emit("event", {
+        type: "outgoing",
+        text: decision.text,
+        chatId: m.chatId
+      } as RuntimeEvent);
+    } catch (e) {
+      this.emit("event", {
+        type: "error",
+        text: `after-hours auto-reply send failed: ${(e as Error).message}`,
+        chatId: m.chatId
+      } as RuntimeEvent);
+      // Send-fail → не помечаем lastAutoReplyAt, чтобы при следующем сообщении была повторная попытка.
+      return "handled";
+    }
+
+    if (contact) {
+      try {
+        const updated = { ...contact, lastAutoReplyAt: now.toISOString(), updatedAt: now.toISOString() };
+        await saveContact(this.cfg.slug, updated);
+      } catch (e) {
+        // Не критично: следующий вход может выдать второй auto-reply, но это лучше, чем падение flow.
+        this.emit("event", {
+          type: "error",
+          text: `after-hours: persist lastAutoReplyAt failed: ${(e as Error).message}`,
+          chatId: m.chatId
+        } as RuntimeEvent);
+      }
+    }
+    return "handled";
   }
 
   /**
@@ -782,6 +868,14 @@ export class Runtime extends EventEmitter {
         }
         // gate.action === "allow" — продолжаем legacy-flow ниже.
       }
+
+      // === Manager-mode: AfterHoursPolicy ветвление (Task 4.9, Req 8) ===
+      // Босс к этой ветке не доходит (это non-primary-путь, Req 8.9).
+      // `contact` мог не подняться из-за contacts-storage failure: тогда
+      // обрабатываем по `vip-only`-семантике без VIP-тира → auto-reply (Req 8.8).
+      const afterHoursOutcome = await this.applyAfterHoursPolicy(m, key);
+      if (afterHoursOutcome === "handled") return;
+      // afterHoursOutcome === "continue" — продолжаем legacy-flow ниже.
 
       const romanticApproach = this.isRomanticApproach(incomingText);
       if (await this.maybeBlockAfterBoundary(m.chatId, incomingText, romanticApproach)) return;
