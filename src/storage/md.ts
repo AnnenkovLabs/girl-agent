@@ -666,3 +666,66 @@ export function subscribeMandate(
     }
   };
 }
+
+// ============================================================================
+// Manager-mode: config hot-reload (Task 4.8 manager-mode tasks.md, Req 17.7).
+// ============================================================================
+
+export interface ConfigSubscription {
+  /** Останавливает наблюдение и закрывает watcher. Идемпотентно. */
+  close(): void;
+}
+
+/**
+ * Подписывается на изменения `data/<slug>/config.json` через `fs.watch`.
+ * Колбэк вызывается с распарсенным `ProfileConfig` при каждом успешном
+ * изменении файла; невалидный JSON или ошибка чтения колбэк не дёргают.
+ *
+ * Используется runtime-ом для применения новых значений `gateLevel` и
+ * `whitelist` (Req 17.7) без рестарта профиля. Watcher запускается даже
+ * если файл ещё не существует — он подхватит создание.
+ *
+ * Возвращает объект с `close()` для отписки.
+ */
+export function subscribeConfig(
+  slug: string,
+  onChange: (cfg: ProfileConfig) => void
+): ConfigSubscription {
+  const file = path.join(profileDir(slug), "config.json");
+  let lastSerialized: string | undefined;
+  let closed = false;
+
+  const refresh = async () => {
+    if (closed) return;
+    const cfg = await readConfig(slug);
+    if (!cfg) return;
+    const serialized = JSON.stringify(cfg);
+    if (serialized !== lastSerialized) {
+      lastSerialized = serialized;
+      try { onChange(cfg); } catch { /* swallow */ }
+    }
+  };
+
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+  } catch { /* ignore */ }
+
+  const watcher = fsWatch(path.dirname(file), { persistent: false }, (_event, name) => {
+    if (name === path.basename(file)) {
+      refresh().catch(() => { /* swallow */ });
+    }
+  });
+
+  // Первичная инициализация snapshot — без вызова колбэка.
+  readConfig(slug)
+    .then(cfg => { if (cfg) lastSerialized = JSON.stringify(cfg); })
+    .catch(() => { /* swallow */ });
+
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      try { watcher.close(); } catch { /* ignore */ }
+    }
+  };
+}

@@ -6,8 +6,11 @@ import { behaviorTick } from "./behavior-tick.js";
 import { applyMoodDelta, maybeReflect } from "./reflect.js";
 import {
   appendSessionLog, appendSharedMemory, readRelationship, writeRelationship, writeConfig, writeMd,
-  readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId, profileDir
+  readAgenda, writeAgenda, readRecentSessionTurns, readMd, sessionDate, normalizeOwnerId, profileDir,
+  subscribeConfig, type ConfigSubscription
 } from "../storage/md.js";
+import { evaluateGate, type GateContact } from "./gate.js";
+import { upsertOnIncoming as upsertContactOnIncoming, isBlocked as isContactBlocked } from "./contacts.js";
 import { findStage } from "./legacy-stage.js";
 import type { LegacyStageId as StageId } from "./legacy-stage.js";
 import { communicationProfileLabel, normalizeCommunicationProfile } from "../presets/communication.js";
@@ -105,6 +108,17 @@ export class Runtime extends EventEmitter {
   private lastDecision = new Map<string, DecisionSnapshot>();
   private incomingSeq = new Map<string, number>();
   private tgSelf: { username?: string; displayName?: string } = {};
+  /**
+   * Подписка на изменения `config.json` для hot-reload `gateLevel`/`whitelist`
+   * (Task 4.8 manager-mode, Req 17.7). Закрывается в `stop()`.
+   */
+  private configSubscription?: ConfigSubscription;
+  /**
+   * Журнал моментов отправки агентом ответа клиенту в каждый чат, для
+   * подсчёта ответов в окне 24 часа при `gateLevel=gated` (Req 17.4-17.5).
+   * Хранятся unix-ms; чистка происходит при чтении.
+   */
+  private agentReplyTsByChat = new Map<string, number[]>();
 
   constructor(public cfg: ProfileConfig) {
     super();
@@ -140,6 +154,24 @@ export class Runtime extends EventEmitter {
     if (this.cfg.mode === "userbot" && this.tg?.updateOnlineStatus) {
       this.scheduleOnlineHeartbeat(15_000 + Math.floor(Math.random() * 45_000));
     }
+
+    // Hot-reload `gateLevel`/`whitelist` без рестарта (Task 4.8, Req 17.7).
+    // На каждое сохранение `config.json` подмерживаем новые поля, не теряя
+    // мутаций, сделанных runtime-ом в памяти (например, `ownerId`).
+    this.configSubscription = subscribeConfig(this.cfg.slug, (next) => {
+      this.cfg.gateLevel = next.gateLevel;
+      this.cfg.whitelist = next.whitelist;
+      this.cfg.afterHoursPolicy = next.afterHoursPolicy;
+      this.cfg.tone = next.tone;
+      this.cfg.personaStyle = next.personaStyle;
+      this.cfg.escalationTimeoutMin = next.escalationTimeoutMin;
+      this.cfg.proactiveClients = next.proactiveClients;
+      this.cfg.proactiveBoss = next.proactiveBoss;
+      this.emit("event", {
+        type: "info",
+        text: `config hot-reload: gateLevel=${this.cfg.gateLevel ?? "gated"} whitelist=${this.cfg.whitelist?.length ?? 0}`
+      } as RuntimeEvent);
+    });
   }
 
   async stop(): Promise<void> {
@@ -149,6 +181,8 @@ export class Runtime extends EventEmitter {
     for (const timer of this.pendingReplyTimers.values()) clearTimeout(timer);
     this.pendingReplyTimers.clear();
     this.pendingReplyDueAt.clear();
+    this.configSubscription?.close();
+    this.configSubscription = undefined;
     try {
       const made = await withTimeout(closeCurrentSession(this.llm, this.cfg), 3500);
       if (made) this.emit("event", { type: "info", text: "daily summary обновлена" } as RuntimeEvent);
@@ -317,6 +351,32 @@ export class Runtime extends EventEmitter {
     const media = describeIncomingMedia(m.media);
     if (!media) return m.text;
     return m.text ? `${media}\n${m.text}` : media;
+  }
+
+  /**
+   * Удаляет события «агент ответил клиенту» старше 24 часов и возвращает
+   * количество оставшихся. Используется при `gateLevel=gated` для лимита
+   * cold-stranger в 3 ответа за окно (Req 17.4-17.5).
+   */
+  private countAgentRepliesIn24h(key: string, now: number = Date.now()): number {
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    const arr = this.agentReplyTsByChat.get(key);
+    if (!arr || !arr.length) return 0;
+    const fresh = arr.filter(ts => ts >= cutoff);
+    if (fresh.length !== arr.length) this.agentReplyTsByChat.set(key, fresh);
+    return fresh.length;
+  }
+
+  /**
+   * Регистрирует факт отправки агентом ответа клиенту в данный чат — для
+   * счётчика `gated` (Req 17.4). Вызывается из `scheduleReply` для не-primary.
+   */
+  private recordAgentReply(key: string, ts: number = Date.now()): void {
+    const arr = this.agentReplyTsByChat.get(key) ?? [];
+    arr.push(ts);
+    // Ограничиваем длину массива, чтобы он не разрастался для активных чатов.
+    if (arr.length > 64) arr.splice(0, arr.length - 64);
+    this.agentReplyTsByChat.set(key, arr);
   }
 
   private async rememberSharedCrossChat(fromId: number, incomingText: string): Promise<void> {
@@ -659,9 +719,78 @@ export class Runtime extends EventEmitter {
     this.exchangeCount.set(key, (this.exchangeCount.get(key) ?? 0) + 1);
 
     if (!isPrimary) {
+      // === Manager-mode: contacts upsert + blocked-check + gate ветвление ===
+      // (Task 4.7-4.8 manager-mode, Req 2.5, 17.1-17.7).
+      let gateContact: GateContact | undefined;
+      try {
+        const contact = await upsertContactOnIncoming(this.cfg.slug, {
+          chatId: m.chatId,
+          fromUsername: m.fromName,
+          text: m.text,
+          ts: Date.now()
+        });
+        if (isContactBlocked(contact)) {
+          this.emit("event", {
+            type: "ignored",
+            text: m.text,
+            chatId: m.chatId,
+            reason: "blocked"
+          } as RuntimeEvent);
+          return;
+        }
+        gateContact = {
+          chatId: contact.chatId,
+          username: contact.username,
+          tier: contact.tier,
+          manualOverride: contact.manualOverride
+        };
+      } catch (e) {
+        // Если contacts-storage упал — не блокируем legacy-flow, но логируем.
+        this.emit("event", {
+          type: "error",
+          text: `contacts upsert: ${(e as Error).message}`
+        } as RuntimeEvent);
+      }
+
+      if (gateContact) {
+        const gate = evaluateGate({
+          gateLevel: this.cfg.gateLevel,
+          whitelist: this.cfg.whitelist,
+          contact: gateContact,
+          recentReplyCount24h: this.countAgentRepliesIn24h(key)
+        });
+        if (gate.action === "block") {
+          this.emit("event", {
+            type: "ignored",
+            text: m.text,
+            chatId: m.chatId,
+            reason: `gate-${gate.reason}`
+          } as RuntimeEvent);
+          return;
+        }
+        if (gate.action === "force-escalate") {
+          // Полная цепочка эскалации появится в Task 4.12; пока эмитим
+          // info-событие, чтобы WebUI/логика-наверху могли наблюдать срабатывание
+          // ворот. Сообщение клиенту НЕ отправляем (Req 17.5).
+          this.emit("event", {
+            type: "info",
+            text: `gate force-escalate (${gate.reason})`,
+            chatId: m.chatId,
+            reason: gate.reason
+          } as RuntimeEvent);
+          return;
+        }
+        // gate.action === "allow" — продолжаем legacy-flow ниже.
+      }
+
       const romanticApproach = this.isRomanticApproach(incomingText);
       if (await this.maybeBlockAfterBoundary(m.chatId, incomingText, romanticApproach)) return;
       const tick = this.acquaintanceTick(romanticApproach);
+      // Регистрируем будущий ответ агента для квоты `gated` (Req 17.4).
+      // Учёт отправки — оптимистичный: scheduleReply действительно ставит
+      // отправку в очередь; реальная неудача отправки не уменьшит счётчик,
+      // что согласуется с целью «не флудить cold-stranger».
+      if (tick.shouldReply) this.recordAgentReply(key);
       this.scheduleReply(key, m.chatId, hist, tick, "acquaintance", romanticApproach, m, undefined, tick.delaySec);
       return;
     }

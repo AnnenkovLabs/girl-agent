@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `engine/gate.ts` — чистая функция `evaluateGate` для ветвления входящих по `cfg.gateLevel` (`open` / `gated` / `whitelist`) с регистронезависимым матчингом whitelist по `chatId` и `@username`.
+- `storage/md.ts:subscribeConfig` — наблюдатель `config.json` через `fs.watch`, чтобы runtime подхватывал изменения `gateLevel` и `whitelist` без рестарта (≤5 секунд).
+- Wiring в `engine/runtime.ts:handleIncoming` для не-primary клиентов: `upsertOnIncoming` → `isBlocked` → `evaluateGate` с эмитом `ignored`/`info` для `block`/`force-escalate`.
+
 ## 0.4.4
 
 Дата: 2026-05-17
