@@ -1,10 +1,10 @@
 {
-  "name": "@thesashadev/girl-agent",
+  "name": "@thesashadev/manager-agent",
   "version": "0.4.4",
-  "description": "Telegram AI persona engine with memory, schedule, relationship state and MTProto userbot mode.",
+  "description": "AI-менеджер в Telegram: персональный секретарь с эскалацией боссу. Форк @thesashadev/girl-agent.",
   "type": "module",
   "bin": {
-    "girl-agent": "dist/cli.js"
+    "manager-agent": "dist/cli.js"
   },
   "main": "dist/cli.js",
   "files": [
@@ -30,15 +30,24 @@
   },
   "author": "TheSashaDev (void)",
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shxpe0x/girl-agent-manager.git"
+  },
+  "homepage": "https://github.com/shxpe0x/girl-agent-manager#readme",
+  "bugs": {
+    "url": "https://github.com/shxpe0x/girl-agent-manager/issues"
+  },
   "keywords": [
     "telegram",
     "ai",
     "agent",
+    "manager",
+    "secretary",
     "webui",
     "mcp",
     "userbot",
     "llm",
-    "persona",
     "anthropic",
     "openai"
   ],
