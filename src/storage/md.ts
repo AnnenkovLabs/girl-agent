@@ -501,3 +501,165 @@ export async function deleteContact(slug: string, chatId: string): Promise<void>
     throw e;
   }
 }
+
+
+// ============================================================================
+// Manager-mode: tickets storage (Task 3.5 manager-mode tasks.md).
+// ============================================================================
+
+import type { Ticket, TicketsFile, TicketState } from "../types.js";
+
+const VALID_TICKET_STATES: ReadonlyArray<TicketState> = [
+  "open",
+  "waiting-boss",
+  "answered",
+  "closed"
+];
+
+function ticketsFile(slug: string): string {
+  return path.join(profileDir(slug), "tickets.json");
+}
+
+const EMPTY_TICKETS: TicketsFile = { version: 1, nextId: 1, tickets: [] };
+
+function isValidTicket(raw: unknown): raw is Ticket {
+  if (!raw || typeof raw !== "object") return false;
+  const t = raw as Partial<Ticket>;
+  if (typeof t.id !== "string" || !/^#T-\d+$/.test(t.id)) return false;
+  if (typeof t.chatId !== "string" || t.chatId.length === 0) return false;
+  if (typeof t.summary !== "string") return false;
+  if (!t.state || !VALID_TICKET_STATES.includes(t.state)) return false;
+  if (typeof t.createdAt !== "string") return false;
+  if (!Array.isArray(t.history)) return false;
+  return true;
+}
+
+function isValidTicketsFile(raw: unknown): raw is TicketsFile {
+  if (!raw || typeof raw !== "object") return false;
+  const f = raw as Partial<TicketsFile>;
+  if (f.version !== 1) return false;
+  if (typeof f.nextId !== "number" || f.nextId < 1) return false;
+  if (!Array.isArray(f.tickets)) return false;
+  for (const t of f.tickets) {
+    if (!isValidTicket(t)) return false;
+  }
+  return true;
+}
+
+/** Загружает `tickets.json`. Возвращает пустой initial-state на отсутствие/повреждение. */
+export async function loadTickets(slug: string): Promise<TicketsFile> {
+  try {
+    const raw = await fs.readFile(ticketsFile(slug), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!isValidTicketsFile(parsed)) return { ...EMPTY_TICKETS };
+    return parsed;
+  } catch {
+    return { ...EMPTY_TICKETS };
+  }
+}
+
+/** Атомарно сохраняет `tickets.json` (write-temp + rename). */
+export async function saveTickets(slug: string, file: TicketsFile): Promise<void> {
+  if (!isValidTicketsFile(file)) {
+    throw new Error("invalid TicketsFile");
+  }
+  await atomicWriteJson(ticketsFile(slug), file);
+}
+
+/**
+ * Возвращает следующий целочисленный id для нового тикета и инкрементирует
+ * счётчик внутри переданного `TicketsFile`. Не сохраняет файл — caller
+ * отвечает за `saveTickets()`.
+ */
+export function nextTicketId(file: TicketsFile): number {
+  const id = file.nextId;
+  file.nextId = Math.min(2147483647, file.nextId + 1);
+  return id;
+}
+
+// ============================================================================
+// Manager-mode: mandate storage with hot-reload subscribe.
+// ============================================================================
+
+import { watch as fsWatch } from "node:fs";
+
+function mandateFile(slug: string): string {
+  return path.join(profileDir(slug), "mandate.md");
+}
+
+/** Читает `mandate.md`. Возвращает пустую строку если файла нет. */
+export async function loadMandate(slug: string): Promise<string> {
+  try {
+    return await fs.readFile(mandateFile(slug), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Сохраняет `mandate.md` атомарно. */
+export async function saveMandate(slug: string, text: string): Promise<void> {
+  const file = mandateFile(slug);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmp, text, "utf8");
+  await fs.rename(tmp, file);
+}
+
+export interface MandateSubscription {
+  /** Останавливает наблюдение и закрывает watcher. Идемпотентно. */
+  close(): void;
+}
+
+/**
+ * Подписывается на изменения `mandate.md` через `fs.watch`. Колбэк вызывается
+ * с новым содержимым (либо пустой строкой если файл удалили). Дедуп по строке —
+ * подряд идущие одинаковые значения не триггерят колбэк.
+ *
+ * Возвращает объект с `close()` для отписки. На несуществующий файл watcher
+ * запускается всё равно — он подхватит создание файла, как только тот появится
+ * в директории профиля.
+ */
+export function subscribeMandate(
+  slug: string,
+  onChange: (text: string) => void
+): MandateSubscription {
+  const file = mandateFile(slug);
+  let last: string | undefined;
+  let closed = false;
+
+  const refresh = async () => {
+    if (closed) return;
+    try {
+      const text = await fs.readFile(file, "utf8");
+      if (text !== last) {
+        last = text;
+        onChange(text);
+      }
+    } catch {
+      if (last !== "") {
+        last = "";
+        onChange("");
+      }
+    }
+  };
+
+  // Гарантируем существование директории профиля, иначе fs.watch упадёт.
+  fs.mkdir(path.dirname(file), { recursive: true }).catch(() => { /* ignore */ });
+
+  const watcher = fsWatch(path.dirname(file), { persistent: false }, (_event, name) => {
+    if (name === path.basename(file)) {
+      refresh().catch(() => { /* swallow */ });
+    }
+  });
+
+  // Первичная инициализация last — без вызова колбэка.
+  fs.readFile(file, "utf8").then(text => { last = text; }).catch(() => { last = ""; });
+
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      try { watcher.close(); } catch { /* ignore */ }
+    }
+  };
+}
