@@ -73,6 +73,129 @@ export interface CommunicationProfile {
   lifeSharing: LifeSharingLevel;
 }
 
+// ============================================================================
+// Manager-mode types (см. .kiro/specs/manager-mode/design.md § 3.1).
+// ============================================================================
+
+/** Контактный уровень — заменяет StageId оригинала girl-agent. */
+export type Tier =
+  | "cold-stranger"
+  | "introduced"
+  | "regular"
+  | "trusted-partner"
+  | "vip"
+  | "blocked";
+
+/** Деловой тон общения. `mixed-by-tier` выбирает «вы»/«ты» по `Tier` контакта. */
+export type Tone = "formal-вы" | "friendly-ты" | "mixed-by-tier";
+
+/** Гендерный образ ассистента. */
+export type PersonaStyle =
+  | "gender-neutral-assistant"
+  | "female-secretary"
+  | "male-secretary";
+
+/** Режим доступа к чату. */
+export type GateLevel = "open" | "gated" | "whitelist";
+
+/** Политика поведения вне рабочих часов. */
+export type AfterHoursPolicy = "silent" | "auto-reply" | "vip-only";
+
+/** Запись whitelist при `gateLevel=whitelist`. */
+export type WhitelistEntry =
+  | { kind: "id"; chatId: number }
+  | { kind: "username"; username: string };
+
+/** Пять менеджерских счётчиков, заменяют RelationshipScore оригинала. */
+export interface ContactScore {
+  /** -100..100 */
+  relevance: number;
+  /** -100..100 */
+  trust: number;
+  /** 0..100 */
+  urgency: number;
+  /** 0..100 */
+  annoyance: number;
+  /** 0..100 */
+  spamScore: number;
+}
+
+/** ContactRecord — `data/<slug>/contacts/<chat_id>.json`. */
+export interface ContactRecord {
+  chatId: string;
+  username?: string;
+  tier: Tier;
+  notes?: string;
+  score: ContactScore;
+  manualOverride: boolean;
+  updatedAt: string;
+  createdAt: string;
+  lastMessageAt?: string;
+  /** Время последнего одноразового auto-reply за текущее off-window. */
+  lastAutoReplyAt?: string;
+  meta?: {
+    firstName?: string;
+    promoMarker?: string;
+  };
+}
+
+/** Состояние тикета. */
+export type TicketState = "open" | "waiting-boss" | "answered" | "closed";
+
+export interface TicketTransition {
+  ts: string;
+  from: TicketState | "<initial>";
+  to: TicketState;
+  reason: string;
+  by: "system" | "boss" | "owner-webui";
+}
+
+export interface Ticket {
+  /** Формат "#T-<n>", n ∈ 1..2_147_483_647. */
+  id: string;
+  chatId: string;
+  clientUsername?: string;
+  /** ≤500 символов, отправляется боссу. */
+  summary: string;
+  state: TicketState;
+  createdAt: string;
+  closedAt?: string;
+  bossReplyRaw?: string;
+  bossReplyAt?: string;
+  clientReply?: string;
+  clientReplyAt?: string;
+  /** Флаг одноразового таймаут-уведомления клиенту. */
+  timeoutNotified?: boolean;
+  history: TicketTransition[];
+  bossMessageId?: number;
+  bossChatId?: number;
+  llmDraftForBoss?: string;
+  meta?: {
+    confidentialityBlocks?: number;
+  };
+}
+
+/** Корневая структура `tickets.json`. */
+export interface TicketsFile {
+  version: 1;
+  /** Монотонно растущий счётчик для генерации `#T-<n>`. */
+  nextId: number;
+  tickets: Ticket[];
+}
+
+/** Результат разбора `Boss_Reply` по 3 идентификаторам. */
+export type BossReplyParseResult =
+  | { kind: "matched"; ticketId: string; clientReplyText: string }
+  | { kind: "conflict"; candidateIds: string[] }
+  | { kind: "ambiguous-username"; candidateIds: string[]; username: string }
+  | { kind: "no-username-meta"; ticketId: string }
+  | { kind: "ticket-not-found"; ticketId: string }
+  | { kind: "empty-reply"; ticketId: string }
+  | { kind: "no-identification" };
+
+/** Решение слоя `mandate.decideAction`. */
+export type EscalationDecision = "answer-self" | "escalate" | "decline" | "ignore";
+
 export interface ProfileConfig {
   slug: string;
   name: string;
@@ -127,6 +250,30 @@ export interface ProfileConfig {
   communication?: CommunicationProfile;
   personaNotes?: string;
   busySchedule?: BusySlot[];
+
+  // ===== Manager-mode (см. .kiro/specs/manager-mode/design.md § 3.1) =====
+  /** Деловой тон. Дефолт `mixed-by-tier`. */
+  tone?: Tone;
+  /** Persona-стиль. Дефолт `gender-neutral-assistant`. */
+  personaStyle?: PersonaStyle;
+  /** Режим доступа к чату. Дефолт `gated`. */
+  gateLevel?: GateLevel;
+  /** Политика после рабочих часов. Дефолт `vip-only`. */
+  afterHoursPolicy?: AfterHoursPolicy;
+  /** Включить follow-up клиентам по обещаниям. Дефолт `false`. */
+  proactiveClients?: boolean;
+  /** Включить дайджесты боссу. Дефолт `false`. */
+  proactiveBoss?: boolean;
+  /** Список разрешённых чатов при `gateLevel=whitelist`. */
+  whitelist?: WhitelistEntry[];
+  /** Минуты до таймаут-уведомления клиенту по тикету (5..1440). Дефолт 240. */
+  escalationTimeoutMin?: number;
+  /** Период дайджеста боссу в часах (1..168). Дефолт 24. */
+  digestPeriodHours?: number;
+  /** Время дайджеста боссу в формате HH:MM. Дефолт 09:00. */
+  digestTime?: string;
+  /** Discriminator на будущее. Сейчас всегда `manager`. */
+  profileType?: "manager";
 }
 
 export interface RelationshipScore {
