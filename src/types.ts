@@ -133,6 +133,13 @@ export interface ContactRecord {
   lastMessageAt?: string;
   /** Время последнего одноразового auto-reply за текущее off-window. */
   lastAutoReplyAt?: string;
+  /**
+   * Счётчик входящих сообщений с момента последнего тир-перехода. Используется
+   * `engine/contacts.ts:decideTierTransition` чтобы запускать оценку перехода
+   * не чаще, чем раз в 5 сообщений (см. design § 8.4 и Task 4.7). Поле опциональное
+   * для обратной совместимости со старыми ContactRecord без счётчика.
+   */
+  messagesSinceTransition?: number;
   meta?: {
     firstName?: string;
     promoMarker?: string;
