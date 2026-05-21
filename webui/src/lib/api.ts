@@ -267,6 +267,36 @@ export const api = {
       `/api/contacts/${encodeURIComponent(slug)}/${encodeURIComponent(chatId)}`,
       patch
     );
+  },
+
+  // === Manager-mode: inbox (Task 5.8, Req 11) ===
+  async listInbox(slug: string, opts: { state?: TicketState | "all" } = {}) {
+    const qs = new URLSearchParams();
+    if (opts.state && opts.state !== "all") qs.set("state", opts.state);
+    const q = qs.toString();
+    return req<{ tickets: TicketSummary[] }>(
+      "GET",
+      `/api/inbox/${encodeURIComponent(slug)}${q ? `?${q}` : ""}`
+    );
+  },
+  async getTicket(slug: string, ticketId: string) {
+    return req<{ ticket: TicketSummary }>(
+      "GET",
+      `/api/inbox/${encodeURIComponent(slug)}/${encodeURIComponent(ticketId)}`
+    );
+  },
+  async replyTicket(slug: string, ticketId: string, text: string) {
+    return req<{ ticket: TicketSummary }>(
+      "POST",
+      `/api/inbox/${encodeURIComponent(slug)}/${encodeURIComponent(ticketId)}/reply`,
+      { text }
+    );
+  },
+  async cancelTicket(slug: string, ticketId: string) {
+    return req<{ ticket: TicketSummary }>(
+      "POST",
+      `/api/inbox/${encodeURIComponent(slug)}/${encodeURIComponent(ticketId)}/cancel`
+    );
   }
 };
 
@@ -294,6 +324,32 @@ export interface ContactSummary {
     annoyance: number;
     spamScore: number;
   };
+}
+
+export type TicketState = "open" | "waiting-boss" | "answered" | "closed";
+
+export interface TicketTransition {
+  ts: string;
+  from: TicketState | "<initial>";
+  to: TicketState;
+  reason: string;
+  by: "system" | "boss" | "owner-webui";
+}
+
+export interface TicketSummary {
+  id: string;
+  chatId: string;
+  clientUsername?: string;
+  summary: string;
+  state: TicketState;
+  createdAt: string;
+  closedAt?: string;
+  bossReplyRaw?: string;
+  bossReplyAt?: string;
+  clientReply?: string;
+  clientReplyAt?: string;
+  llmDraftForBoss?: string;
+  history: TicketTransition[];
 }
 
 export function logsSocket(slug: string, onEvent: (e: { type: string; text?: string; t: number }) => void): () => void {
