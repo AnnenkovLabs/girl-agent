@@ -2,17 +2,21 @@ import { Router, HttpError } from "../http.js";
 import {
   DATA_ROOT, listProfiles, readConfig, writeConfig, deleteProfile, ensureProfile,
   readMd, writeMd, slugify, normalizeOwnerId, profileDir, readRelationship, sessionDate,
-  readSessionLog, listSessionDays, listDailySummaries, readDailySummary
+  readSessionLog, listSessionDays, listDailySummaries, readDailySummary,
+  saveMandate, saveTickets
 } from "../../storage/md.js";
-import type { ProfileConfig } from "../../types.js";
+import type {
+  ProfileConfig, Tone, PersonaStyle, GateLevel, AfterHoursPolicy, WhitelistEntry, TicketsFile
+} from "../../types.js";
 import { parseTelegramProxyInput } from "../../telegram/proxy-parse.js";
 import { bus } from "../runtime-bus.js";
-import { findStage } from "../../presets/stages.js";
+import { legacyStage } from "../../engine/legacy-stage.js";
 import { ensurePersonaPack, generatePersonaPack } from "../../engine/persona-gen.js";
 import { makeLLM } from "../../llm/index.js";
 import { applyLLMUpdate, describeLLM } from "../../config/llm-update.js";
 import { findPreset } from "../../presets/llm.js";
 import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 const MEMORY_FILES = [
@@ -93,38 +97,210 @@ export function registerProfileRoutes(r: Router): void {
   });
 
   r.post("/api/profiles", async ({ body }) => {
-    const data = body as Partial<ProfileConfig> | undefined;
-    if (!data || !data.name || typeof data.name !== "string") throw new HttpError(400, "name required");
-    const slug = data.slug || slugify(data.name);
-    const existing = await readConfig(slug);
-    if (existing) throw new HttpError(409, `profile already exists: ${slug}`);
+    // Тело визарда расширяется управленческим полем `mandate` (хранится
+    // отдельно в `mandate.md`, не в `ProfileConfig`), поэтому типизируем
+    // вход как ProfileConfig + этот доп. ключ.
+    const data = body as (Partial<ProfileConfig> & { mandate?: unknown }) | undefined;
+    if (!data || typeof data !== "object") throw new HttpError(400, "invalid body");
+
+    const errors: Record<string, string> = {};
+
+    // === name ===
+    if (!data.name || typeof data.name !== "string" || data.name.length < 1 || data.name.length > 64) {
+      errors.name = "name required (1..64 chars)";
+    }
+
+    // === slug ===
+    const rawSlug = (typeof data.slug === "string" && data.slug.length > 0)
+      ? data.slug
+      : (typeof data.name === "string" ? slugify(data.name) : "");
+    if (!rawSlug || rawSlug.length < 3 || rawSlug.length > 32 || !/^[a-z0-9-]+$/.test(rawSlug)) {
+      errors.slug = "slug must be 3..32 chars, [a-z0-9-]";
+    } else {
+      const existing = await readConfig(rawSlug);
+      if (existing) errors.slug = `profile already exists: ${rawSlug}`;
+    }
+
+    // === ownerId (Req 1.4: required, 1..9999999999999) ===
+    const ownerId = normalizeOwnerId(data.ownerId);
+    if (ownerId === undefined || ownerId < 1 || ownerId > 9_999_999_999_999) {
+      errors.ownerId = "ownerId required (integer 1..9999999999999)";
+    }
+
+    // === enums with defaults (Req 1.3) ===
+    const VALID_TONES: Tone[] = ["formal-вы", "friendly-ты", "mixed-by-tier"];
+    const VALID_PERSONAS: PersonaStyle[] = ["gender-neutral-assistant", "female-secretary", "male-secretary"];
+    const VALID_GATES: GateLevel[] = ["open", "gated", "whitelist"];
+    const VALID_AHP: AfterHoursPolicy[] = ["silent", "auto-reply", "vip-only"];
+
+    const tone: Tone = data.tone ?? "mixed-by-tier";
+    if (!VALID_TONES.includes(tone)) errors.tone = `tone must be one of ${VALID_TONES.join("|")}`;
+
+    const personaStyle: PersonaStyle = data.personaStyle ?? "gender-neutral-assistant";
+    if (!VALID_PERSONAS.includes(personaStyle)) errors.personaStyle = `personaStyle must be one of ${VALID_PERSONAS.join("|")}`;
+
+    const gateLevel: GateLevel = data.gateLevel ?? "gated";
+    if (!VALID_GATES.includes(gateLevel)) errors.gateLevel = `gateLevel must be one of ${VALID_GATES.join("|")}`;
+
+    const afterHoursPolicy: AfterHoursPolicy = data.afterHoursPolicy ?? "vip-only";
+    if (!VALID_AHP.includes(afterHoursPolicy)) errors.afterHoursPolicy = `afterHoursPolicy must be one of ${VALID_AHP.join("|")}`;
+
+    // === booleans ===
+    if (data.proactiveClients !== undefined && typeof data.proactiveClients !== "boolean") {
+      errors.proactiveClients = "proactiveClients must be boolean";
+    }
+    if (data.proactiveBoss !== undefined && typeof data.proactiveBoss !== "boolean") {
+      errors.proactiveBoss = "proactiveBoss must be boolean";
+    }
+
+    // === mandate (string ≤4000) ===
+    let mandate: string = "";
+    if (data.mandate !== undefined && data.mandate !== null) {
+      if (typeof data.mandate !== "string") {
+        errors.mandate = "mandate must be string";
+      } else if (data.mandate.length > 4000) {
+        errors.mandate = "mandate must be ≤4000 chars";
+      } else {
+        mandate = data.mandate;
+      }
+    }
+
+    // === whitelist (Req 1.9) ===
+    let whitelist: WhitelistEntry[] | undefined;
+    if (data.whitelist !== undefined) {
+      if (!Array.isArray(data.whitelist)) {
+        errors.whitelist = "whitelist must be array";
+      } else {
+        const entries: WhitelistEntry[] = [];
+        let bad = false;
+        for (let i = 0; i < data.whitelist.length; i++) {
+          const e = data.whitelist[i] as Partial<WhitelistEntry> | undefined;
+          if (!e || typeof e !== "object") { bad = true; break; }
+          if (e.kind === "id") {
+            const id = typeof e.chatId === "number" ? e.chatId : Number(e.chatId);
+            if (!Number.isSafeInteger(id) || id < 1 || id > 9_999_999_999_999) { bad = true; break; }
+            entries.push({ kind: "id", chatId: id });
+          } else if (e.kind === "username") {
+            const u = typeof e.username === "string" ? e.username : "";
+            if (u.length < 3 || u.length > 32 || !/^[a-zA-Z0-9_]+$/.test(u)) { bad = true; break; }
+            entries.push({ kind: "username", username: u.toLowerCase() });
+          } else {
+            bad = true; break;
+          }
+        }
+        if (bad) {
+          errors.whitelist = "whitelist contains invalid entry (kind: 'id'|'username')";
+        } else {
+          whitelist = entries;
+        }
+      }
+    }
+    if (gateLevel === "whitelist" && !errors.whitelist) {
+      if (!whitelist || whitelist.length === 0) {
+        errors.whitelist = "whitelist required (non-empty) when gateLevel=whitelist";
+      }
+    }
+
+    // === escalationTimeoutMin (Req 5.6: 5..1440) ===
+    let escalationTimeoutMin = 240;
+    if (data.escalationTimeoutMin !== undefined) {
+      const v = Number(data.escalationTimeoutMin);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 5 || v > 1440) {
+        errors.escalationTimeoutMin = "escalationTimeoutMin must be integer 5..1440";
+      } else {
+        escalationTimeoutMin = v;
+      }
+    }
+
+    // === digestPeriodHours (Req 9.2: 1..168) ===
+    let digestPeriodHours = 24;
+    if (data.digestPeriodHours !== undefined) {
+      const v = Number(data.digestPeriodHours);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1 || v > 168) {
+        errors.digestPeriodHours = "digestPeriodHours must be integer 1..168";
+      } else {
+        digestPeriodHours = v;
+      }
+    }
+
+    // === digestTime HH:MM ===
+    let digestTime = "09:00";
+    if (data.digestTime !== undefined) {
+      if (typeof data.digestTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(data.digestTime)) {
+        errors.digestTime = "digestTime must be HH:MM (24h)";
+      } else {
+        digestTime = data.digestTime;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      throw new HttpError(400, "validation failed", { errors });
+    }
+
+    // === Атомарное создание профиля с rollback при ошибке любого шага. ===
+    const slug = rawSlug;
+    const dir = profileDir(slug);
     const incomingTg = data.telegram ?? {};
     const cfg: ProfileConfig = {
       slug,
-      name: data.name,
+      name: data.name as string,
       age: data.age ?? 22,
       nationality: data.nationality ?? "RU",
       tz: data.tz ?? "Europe/Moscow",
       mode: data.mode ?? "bot",
-      stage: data.stage ?? "tg-given-cold",
+      stage: data.stage ?? "manager-default",
       llm: data.llm ?? { presetId: "claudehub", proto: "anthropic", apiKey: "", model: "claude-sonnet-4.6" },
       telegram: {
         ...incomingTg,
         proxy: parseTelegramProxyInput(incomingTg.proxy as unknown as string | undefined)
       },
       privacy: data.privacy ?? "owner-only",
-      ownerId: normalizeOwnerId(data.ownerId),
+      ownerId: ownerId as number,
       createdAt: new Date().toISOString(),
       sleepFrom: data.sleepFrom ?? 23,
       sleepTo: data.sleepTo ?? 8,
       nightWakeChance: data.nightWakeChance ?? 0.05,
       ignoreTendency: data.ignoreTendency ?? 35,
-      vibe: data.vibe,
-      communication: data.communication,
       personaNotes: data.personaNotes,
-      busySchedule: data.busySchedule ?? []
+      busySchedule: data.busySchedule ?? [],
+      // manager-mode fields
+      tone,
+      personaStyle,
+      gateLevel,
+      afterHoursPolicy,
+      proactiveClients: data.proactiveClients ?? false,
+      proactiveBoss: data.proactiveBoss ?? false,
+      whitelist,
+      escalationTimeoutMin,
+      digestPeriodHours,
+      digestTime,
+      profileType: "manager"
     };
-    await writeConfig(cfg);
+
+    // Перед стартом записи зафиксируем — существовала ли директория профиля.
+    // Если нет, при rollback мы её удаляем целиком; если была (что не должно
+    // происходить, т.к. readConfig вернул null, но всё же страхуемся) —
+    // оставляем как есть.
+    const dirExistedBefore = existsSync(dir);
+    try {
+      // Запись config.json (создаст dir через ensureProfile).
+      await writeConfig(cfg);
+      // mandate.md (Req 1.7 — пишем всегда, в т.ч. пустой).
+      await saveMandate(slug, mandate);
+      // tickets.json — пустая коллекция.
+      const emptyTickets: TicketsFile = { version: 1, nextId: 1, tickets: [] };
+      await saveTickets(slug, emptyTickets);
+      // contacts/ — пустая директория.
+      await fs.mkdir(path.join(dir, "contacts"), { recursive: true });
+    } catch (e) {
+      // Rollback: удаляем частично созданные файлы и каталог data/<slug>/.
+      if (!dirExistedBefore) {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+      }
+      const msg = (e as Error)?.message ?? String(e);
+      throw new HttpError(500, `profile creation failed: ${msg}`, { slug });
+    }
+
     return { config: cfg };
   });
 
@@ -195,7 +371,7 @@ export function registerProfileRoutes(r: Router): void {
     const cfg = await readConfig(slug);
     if (!cfg) throw new HttpError(404, "profile not found");
     const rel = await readRelationship(slug);
-    const stage = findStage(rel.stage);
+    const stage = legacyStage(rel.stage);
     return { stage: { id: stage.id, num: stage.num, label: stage.label }, score: rel.score };
   });
 

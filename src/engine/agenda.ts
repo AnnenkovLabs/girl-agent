@@ -1,7 +1,7 @@
 import type { ProfileConfig, Weekday } from "../types.js";
 import type { LLMClient } from "../llm/index.js";
 import { readAgenda, writeAgenda, readMd, writeMd, readRelationship, type AgendaItem } from "../storage/md.js";
-import { findStage } from "../presets/stages.js";
+import { legacyStage } from "./legacy-stage.js";
 import { communicationDecisionState, normalizeCommunicationProfile } from "../presets/communication.js";
 import type { DailyLife } from "./daily-life.js";
 import type { ConflictState } from "./conflict.js";
@@ -250,7 +250,7 @@ export async function extractAgendaUpdates(
   incoming: string,
   chatId: string | number
 ): Promise<{ created: number; updated: number; cancelled: number }> {
-  const stage = findStage(cfg.stage);
+  const stage = legacyStage(cfg.stage);
   const communication = normalizeCommunicationProfile(cfg);
   // Агенда не для холодных стадий — экономим LLM-вызовы.
   if ((cfg.stage === "tg-given-cold" && communication.initiative !== "high") || (cfg.stage === "met-irl-got-tg" && communication.initiative === "low")) {
@@ -358,7 +358,7 @@ export async function ensureAutonomousAgenda(
     return { created: 0 };
   }
 
-  const stage = findStage(cfg.stage);
+  const stage = legacyStage(cfg.stage);
   const rel = await readRelationship(cfg.slug);
   const persona = (await readMd(cfg.slug, "persona.md")).slice(0, 900);
   const speech = (await readMd(cfg.slug, "speech.md")).slice(0, 600);
@@ -515,4 +515,41 @@ Reшение?`;
     // дефолт — больше не пинговать чтобы не быть навязчивой
     return { decision: "satisfied", note: "fallback" };
   }
+}
+
+// ============================================================================
+// Manager-mode (Task 4.10): двусторонняя повестка с гейтингом по флагам
+// `proactiveClients` / `proactiveBoss` (Requirement 9.4-9.5).
+// ============================================================================
+
+/** Направление пункта повестки. Совпадает с `AgendaItem.direction`. */
+export type AgendaDirection = "client" | "boss";
+
+/**
+ * Возвращает направление пункта повестки. Записи без поля `direction`
+ * (созданные до Task 4.10) трактуются как клиентские для backward-compat.
+ */
+export function agendaItemDirection(item: AgendaItem): AgendaDirection {
+  return item.direction === "boss" ? "boss" : "client";
+}
+
+/**
+ * Фильтрует список due-пунктов, которым разрешена эмиссия по флагам.
+ *
+ * Семантика:
+ *  - `proactiveClients=false` блокирует все клиентские пункты (Req 9.4),
+ *    кроме тех, что относятся к активному тикету (`ticketId` присутствует
+ *    у пункта — на текущий момент в типе нет такого поля, поэтому
+ *    runtime отвечает за освобождение тикетных follow-up).
+ *  - `proactiveBoss=false` блокирует все боссовые пункты (Req 9.5).
+ */
+export function gateAgendaByFlags(
+  items: AgendaItem[],
+  flags: { proactiveClients?: boolean; proactiveBoss?: boolean }
+): AgendaItem[] {
+  return items.filter(it => {
+    const dir = agendaItemDirection(it);
+    if (dir === "client") return flags.proactiveClients === true;
+    return flags.proactiveBoss === true;
+  });
 }

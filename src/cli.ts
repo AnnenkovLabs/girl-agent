@@ -12,42 +12,43 @@ import type { ProfileConfig } from "./types.js";
 import { makeLLM } from "./llm/index.js";
 import { generatePersonaPack } from "./engine/persona-gen.js";
 import { findPreset } from "./presets/llm.js";
-import { findStage } from "./presets/stages.js";
+import { legacyStage } from "./engine/legacy-stage.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
 import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "./presets/communication.js";
+import { describeMissingProfile } from "./cli-args.js";
 
 const nodeMajor = Number(process.versions.node.split(".")[0] ?? 0);
 if (nodeMajor < 18) {
-  process.stderr.write(`[girl-agent] Node.js ${process.version} не поддерживается. Нужен Node.js 18.18+; в Termux: pkg install nodejs\n`);
+  process.stderr.write(`[manager-agent] Node.js ${process.version} не поддерживается. Нужен Node.js 18.18+; в Termux: pkg install nodejs\n`);
   process.exit(1);
 }
 if (nodeMajor < 20) {
-  process.stderr.write(`[girl-agent] предупреждение: Node.js ${process.version}; рекомендуется 20/22, но продолжаю запуск.\n`);
+  process.stderr.write(`[manager-agent] предупреждение: Node.js ${process.version}; рекомендуется 20/22, но продолжаю запуск.\n`);
 }
 
 const HELP = `
-girl-agent — AI girl for Telegram (WebUI)
+manager-agent — AI-менеджер в Telegram (WebUI). Форк @thesashadev/girl-agent.
 
 usage:
-  npx girl-agent                       # запустить WebUI и открыть http://localhost:3000
-  npx girl-agent --port=8080           # кастомный порт
-  npx girl-agent --host=0.0.0.0        # слушать на всех интерфейсах
-  GIRL_AGENT_PUBLIC_URL=https://example.com npx girl-agent  # URL для reverse proxy/docker
-  npx girl-agent --no-browser          # не открывать браузер автоматически
-  npx girl-agent --profile=<slug>      # запустить WebUI и сразу запустить указанный профиль
+  npx manager-agent                       # запустить WebUI и открыть http://localhost:3100
+  npx manager-agent --port=8080           # кастомный порт
+  npx manager-agent --host=0.0.0.0        # слушать на всех интерфейсах
+  MANAGER_AGENT_PUBLIC_URL=https://example.com npx manager-agent  # URL для reverse proxy/docker
+  npx manager-agent --no-browser          # не открывать браузер автоматически
+  npx manager-agent --profile=<slug>      # запустить WebUI и сразу запустить указанный профиль
 
 server (для систем без TTY: docker / systemd / cron / CI):
-  npx girl-agent server --print-config > bot.json
-  npx girl-agent server --config bot.json --headless
-  npx girl-agent server --print-systemd | --print-docker | --list
+  npx manager-agent server --print-config > bot.json
+  npx manager-agent server --config bot.json --headless
+  npx manager-agent server --print-systemd | --print-docker | --list
 
 headless (для desktop-rs обвязки):
-  npx girl-agent --profile=<slug> --json-events
-  npx girl-agent --profile=<slug> --headless
+  npx manager-agent --profile=<slug> --json-events
+  npx manager-agent --profile=<slug> --headless
 
 установка одной командой (без node на машине):
-  curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/main/scripts/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/shxpe0x/girl-agent-manager/master/scripts/install.sh | sh
 
 быстрые команды:
   --list                       показать профили и data dir
@@ -77,7 +78,7 @@ async function main(): Promise<void> {
   const positional = (argv._ as string[]) ?? [];
   const subcommand = positional[0];
 
-  // Server subcommand: `npx girl-agent server [...]`
+  // Server subcommand: `npx manager-agent server [...]`
   const isServer = subcommand === "server" || !!argv.server || !!argv["print-config"] || !!argv["print-systemd"] || !!argv["print-docker"];
   if (isServer) {
     await runServer(argv as Record<string, unknown>);
@@ -167,9 +168,19 @@ async function main(): Promise<void> {
     await writeConfig(cfg);
   }
 
+  // Если указан --profile=<slug>, заранее проверяем, что такой профиль существует.
+  // Не существует → exit≠0 со списком доступных (Requirement 20.3, 20.4).
+  if (typeof argv.profile === "string" && !haveEnoughForFlags) {
+    const existing = await listProfiles();
+    if (!existing.includes(argv.profile)) {
+      process.stderr.write(describeMissingProfile(argv.profile, existing) + "\n");
+      process.exit(1);
+    }
+  }
+
   // ===== WebUI entrypoint =====
-  const port = Number(argv.port ?? process.env.GIRL_AGENT_PORT ?? 3000);
-  const host = String(argv.host ?? process.env.GIRL_AGENT_HOST ?? "127.0.0.1");
+  const port = Number(argv.port ?? process.env.MANAGER_AGENT_PORT ?? 3100);
+  const host = String(argv.host ?? process.env.MANAGER_AGENT_HOST ?? "127.0.0.1");
 
   const instance = await startWebUIServer({
     port,
@@ -178,7 +189,7 @@ async function main(): Promise<void> {
     noBrowser: !!argv["no-browser"]
   });
 
-  process.stdout.write(`\n  🌐 girl-agent WebUI запущен\n`);
+  process.stdout.write(`\n  🌐 manager-agent WebUI запущен\n`);
   process.stdout.write(`     1) ${instance.urls.loopback}\n`);
   process.stdout.write(`     2) ${instance.urls.localhost}\n`);
   process.stdout.write(`     3) ${instance.urls.public}\n`);
@@ -206,7 +217,7 @@ async function main(): Promise<void> {
 
   // Hold process; stop on SIGINT/SIGTERM
   const shutdown = async () => {
-    process.stdout.write("\n[girl-agent] остановка...\n");
+    process.stdout.write("\n[manager-agent] остановка...\n");
     try { await instance.stop(); } catch { /* ignore */ }
     process.exit(0);
   };
@@ -256,7 +267,7 @@ async function buildConfigFromFlags(argv: Record<string, unknown>): Promise<Prof
     nationality: nationality as "RU" | "UA",
     tz,
     mode,
-    stage: findStage(argv.stage as string).id,
+    stage: legacyStage(argv.stage as string).id,
     llm: { presetId, proto, baseURL, apiKey: String(argv["api-key"] ?? preset?.defaultApiKey ?? ""), model },
     telegram: mode === "bot"
       ? { botToken: String(argv.token ?? "") }
@@ -266,7 +277,7 @@ async function buildConfigFromFlags(argv: Record<string, unknown>): Promise<Prof
           phone: String(argv.phone ?? "")
         },
     privacy,
-    ownerId: normalizeOwnerId(argv["owner-id"] ?? process.env.GIRL_AGENT_OWNER_ID),
+    ownerId: normalizeOwnerId(argv["owner-id"] ?? process.env.MANAGER_AGENT_OWNER_ID),
     createdAt: new Date().toISOString(),
     sleepFrom: 23,
     sleepTo: 8,
@@ -293,7 +304,7 @@ async function runAddonCommand(args: string[]): Promise<void> {
   if (sub === "pack") {
     const folder = args[1];
     if (!folder) {
-      process.stderr.write("Использование: npx girl-agent addon pack <folder> [output.gaa]\n");
+      process.stderr.write("Использование: npx manager-agent addon pack <folder> [output.gaa]\n");
       process.exit(1);
     }
     const { packGaa } = await import("./webui/addons.js");
@@ -306,7 +317,7 @@ async function runAddonCommand(args: string[]): Promise<void> {
   if (sub === "init") {
     const folder = args[1];
     if (!folder) {
-      process.stderr.write("Использование: npx girl-agent addon init <folder>\n");
+      process.stderr.write("Использование: npx manager-agent addon init <folder>\n");
       process.exit(1);
     }
     const { promises: initFs } = await import("node:fs");
@@ -335,7 +346,7 @@ async function runAddonCommand(args: string[]): Promise<void> {
     process.stdout.write(`  files/         — файлы для копирования в профиль\n`);
     process.stdout.write(`  config.patch.json — config overrides\n`);
     process.stdout.write(`  README.md      — документация\n\n`);
-    process.stdout.write(`Упаковать: npx girl-agent addon pack ${folder}\n`);
+    process.stdout.write(`Упаковать: npx manager-agent addon pack ${folder}\n`);
     return;
   }
 
@@ -352,7 +363,7 @@ function personaNotesForGeneration(cfg: ProfileConfig): string {
 }
 
 async function tryOpenBrowser(url: string): Promise<void> {
-  if (process.env.GIRL_AGENT_NO_BROWSER || process.env.NO_BROWSER) return;
+  if (process.env.MANAGER_AGENT_NO_BROWSER || process.env.NO_BROWSER) return;
   const platform = os.platform();
   let cmd = "";
   if (platform === "darwin") cmd = `open "${url}"`;
@@ -364,14 +375,14 @@ async function tryOpenBrowser(url: string): Promise<void> {
 process.on("unhandledRejection", (reason) => {
   const r = reason as { stack?: string } | string | undefined;
   const text = (typeof r === "object" && r && r.stack) ? r.stack : String(reason);
-  process.stderr.write("[girl-agent] unhandled rejection: " + text + "\n");
+  process.stderr.write("[manager-agent] unhandled rejection: " + text + "\n");
 });
 
 process.on("uncaughtException", (err) => {
-  process.stderr.write("[girl-agent] uncaught: " + (err?.stack ?? err) + "\n");
+  process.stderr.write("[manager-agent] uncaught: " + (err?.stack ?? err) + "\n");
 });
 
 main().catch((e) => {
-  process.stderr.write("[girl-agent] fatal: " + (e?.stack ?? e) + "\n");
+  process.stderr.write("[manager-agent] fatal: " + (e?.stack ?? e) + "\n");
   process.exit(1);
 });

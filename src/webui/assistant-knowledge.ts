@@ -1,6 +1,6 @@
 import { COMMUNICATION_PRESETS } from "../presets/communication.js";
 import { LLM_PRESETS } from "../presets/llm.js";
-import { STAGE_PRESETS } from "../presets/stages.js";
+import { STAGE_PRESETS } from "../engine/legacy-stage.js";
 
 export interface KnowledgeArticle {
   category: string;
@@ -50,8 +50,8 @@ const CORE_KNOWLEDGE_BASE: KnowledgeArticle[] = [
     category: "storage",
     subcategory: "data-root",
     title: "Где лежат данные",
-    keywords: ["data", "GIRL_AGENT_DATA", "папка", "профили", "windows", "macos", "linux", "хранилище"],
-    body: "Корень профилей берётся из GIRL_AGENT_DATA, иначе в исходниках это ./data, в npm/global запуске — XDG data dir, на Windows %APPDATA%/girl-agent/data, на macOS ~/Library/Application Support/girl-agent/data. Каждый профиль живёт в data/<slug>/."
+    keywords: ["data", "MANAGER_AGENT_DATA", "папка", "профили", "windows", "macos", "linux", "хранилище"],
+    body: "Корень профилей берётся из MANAGER_AGENT_DATA, иначе в исходниках это ./data, в npm/global запуске — XDG data dir, на Windows %APPDATA%/girl-agent/data, на macOS ~/Library/Application Support/girl-agent/data. Каждый профиль живёт в data/<slug>/."
   },
   {
     category: "storage",
@@ -107,7 +107,7 @@ const CORE_KNOWLEDGE_BASE: KnowledgeArticle[] = [
     subcategory: "wss-and-proxy",
     title: "WSS и proxy",
     keywords: ["wss", "useWSS", "proxy", "socks", "блокировки", "443"],
-    body: "telegram.useWSS по умолчанию true и включает WebSocket через 443 вместо TCP 80 — это помогает при блокировках Telegram. Для userbot можно задать SOCKS proxy в config или через GIRL_AGENT_TG_PROXY."
+    body: "telegram.useWSS по умолчанию true и включает WebSocket через 443 вместо TCP 80 — это помогает при блокировках Telegram. Для userbot можно задать SOCKS proxy в config или через MANAGER_AGENT_TG_PROXY."
   },
   {
     category: "telegram",
@@ -387,7 +387,7 @@ const CORE_KNOWLEDGE_BASE: KnowledgeArticle[] = [
     subcategory: "telegram-errors",
     title: "Ошибки Telegram",
     keywords: ["telegram error", "BOT_TOKEN", "API_ID", "API_HASH", "session", "connect", "timeout"],
-    body: "bot mode требует telegram.botToken. userbot требует apiId/apiHash/sessionString и может падать на connect/getMe. Для блокировок включай useWSS или proxy. GIRL_AGENT_DEBUG=1 печатает debug userbot connect/getMe/handlers."
+    body: "bot mode требует telegram.botToken. userbot требует apiId/apiHash/sessionString и может падать на connect/getMe. Для блокировок включай useWSS или proxy. MANAGER_AGENT_DEBUG=1 печатает debug userbot connect/getMe/handlers."
   },
   {
     category: "webui",
@@ -429,7 +429,7 @@ const CORE_KNOWLEDGE_BASE: KnowledgeArticle[] = [
     subcategory: "format",
     title: "Формат .gaa аддонов",
     keywords: ["addon", "gaa", "manifest", "files", "config.patch", "theme.css", "install.sh"],
-    body: ".gaa — zip-архив папки аддона. manifest.json обязателен. files/ копируются в data/<slug>/, config.patch.json deep-merge в config, code.patch может применяться git apply, theme.css добавляет CSS, install.sh опционален. Marketplace берётся из GIRL_AGENT_ADDON_REGISTRY или GitHub raw registry."
+    body: ".gaa — zip-архив папки аддона. manifest.json обязателен. files/ копируются в data/<slug>/, config.patch.json deep-merge в config, code.patch может применяться git apply, theme.css добавляет CSS, install.sh опционален. Marketplace берётся из MANAGER_AGENT_ADDON_REGISTRY или GitHub raw registry."
   },
   {
     category: "addons",

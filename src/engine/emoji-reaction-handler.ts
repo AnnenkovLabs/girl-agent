@@ -31,7 +31,8 @@
  */
 
 import type { LLMClient } from "../llm/index.js";
-import type { CommunicationProfile, RelationshipScore, StageId } from "../types.js";
+import type { CommunicationProfile, RelationshipScore } from "../types.js";
+import type { LegacyStageId as StageId } from "./legacy-stage.js";
 
 const TOXIC = new Set(["👎", "🤡", "💩", "🤮", "🖕", "💀"]);
 const POSITIVE = new Set(["❤", "❤️", "😍", "🥰", "😘", "🔥", "👏", "💋", "🤗", "🥹"]);

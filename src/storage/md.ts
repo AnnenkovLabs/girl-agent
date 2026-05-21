@@ -8,14 +8,14 @@ import { normalizeCommunicationProfile, normalizeIgnoreTendency } from "../prese
 /**
  * Корневая директория профилей.
  *
- * Можно переопределить через `GIRL_AGENT_DATA` (используется десктоп-обвязкой,
- * чтобы хранить данные в `%APPDATA%/girl-agent/data` или `~/.local/share/...`).
+ * Можно переопределить через `MANAGER_AGENT_DATA` (используется десктоп-обвязкой,
+ * чтобы хранить данные в `%APPDATA%/manager-agent/data` или `~/.local/share/...`).
  * По-умолчанию:
  * - в исходниках проекта — `./data`;
  * - при запуске через npx/глобальный бинарь из произвольной папки — XDG data dir.
  */
-export const DATA_ROOT = process.env.GIRL_AGENT_DATA
-  ? path.resolve(process.env.GIRL_AGENT_DATA)
+export const DATA_ROOT = process.env.MANAGER_AGENT_DATA
+  ? path.resolve(process.env.MANAGER_AGENT_DATA)
   : defaultDataRoot();
 
 function canWriteDir(dir: string): boolean {
@@ -32,22 +32,22 @@ function defaultDataRoot(): string {
   const cwd = process.cwd();
   const projectData = path.resolve(cwd, "data");
   if (looksLikeProjectRoot(cwd) && canWriteDir(path.dirname(projectData))) return projectData;
-  // Issue #72: на Windows храним в %APPDATA%\\girl-agent\\data — это ожидаемое
+  // На Windows храним в %APPDATA%\\manager-agent\\data — это ожидаемое
   // место для конфига npm-приложений, при отсутствии XDG.
   if (process.platform === "win32") {
     const appdata = process.env.APPDATA
       ? path.resolve(process.env.APPDATA)
       : path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(appdata, "girl-agent", "data");
+    return path.join(appdata, "manager-agent", "data");
   }
-  // macOS: ~/Library/Application Support/girl-agent/data (если не задан XDG)
+  // macOS: ~/Library/Application Support/manager-agent/data (если не задан XDG)
   if (process.platform === "darwin" && !process.env.XDG_DATA_HOME) {
-    return path.join(os.homedir(), "Library", "Application Support", "girl-agent", "data");
+    return path.join(os.homedir(), "Library", "Application Support", "manager-agent", "data");
   }
   const xdg = process.env.XDG_DATA_HOME
     ? path.resolve(process.env.XDG_DATA_HOME)
     : path.join(os.homedir(), ".local", "share");
-  return path.join(xdg, "girl-agent", "data");
+  return path.join(xdg, "manager-agent", "data");
 }
 
 function looksLikeProjectRoot(dir: string): boolean {
@@ -111,7 +111,7 @@ export async function readConfig(slug: string): Promise<ProfileConfig | null> {
 
 export async function writeConfig(cfg: ProfileConfig): Promise<void> {
   await ensureProfile(cfg.slug);
-  const ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.GIRL_AGENT_OWNER_ID);
+  const ownerId = normalizeOwnerId(cfg.ownerId ?? process.env.MANAGER_AGENT_OWNER_ID);
   const normalized = ownerId === undefined
     ? { ...cfg, ownerId: undefined, ignoreTendency: normalizeIgnoreTendency(cfg.ignoreTendency) }
     : { ...cfg, ownerId, ignoreTendency: normalizeIgnoreTendency(cfg.ignoreTendency) };
@@ -377,11 +377,22 @@ export interface AgendaItem {
   pingAt: string;              // ISO when she should ping
   reason: string;              // почему пишет ("узнать как прошло", "пожелать удачи")
   importance: 1 | 2 | 3;       // 1=обычное любопытство, 3=сильно переживает
-  state: "pending" | "fired" | "cancelled" | "rescheduled";
+  /**
+   * Состояние пункта повестки. `failed` добавлен под manager-mode (Task 4.10):
+   * пункт, у которого отправка через TG-адаптер вернула ошибку. `failed`
+   * никогда не повторяется автоматически — Requirement 9.6.
+   */
+  state: "pending" | "fired" | "cancelled" | "rescheduled" | "failed";
   attempts: number;            // сколько раз уже пинговала (для перепланировки)
   chatId: string | number;     // чат куда писать
   createdAt: string;
   history?: string[];          // лог событий по item ("user said отстань at ...")
+  /**
+   * Направление повестки (Task 4.10 manager-mode). `client` — follow-up
+   * клиенту; `boss` — дайджест боссу. Существующие записи без поля
+   * интерпретируются как `client` для обратной совместимости.
+   */
+  direction?: "client" | "boss";
 }
 
 export async function readAgenda(slug: string): Promise<AgendaItem[]> {
@@ -396,4 +407,336 @@ export async function readAgenda(slug: string): Promise<AgendaItem[]> {
 export async function writeAgenda(slug: string, items: AgendaItem[]): Promise<void> {
   await ensureProfile(slug);
   await fs.writeFile(path.join(profileDir(slug), "agenda.json"), JSON.stringify(items, null, 2), "utf8");
+}
+
+
+// ============================================================================
+// Manager-mode: contacts storage (Task 3.4 .kiro/specs/manager-mode/tasks.md).
+//
+// Каждый контакт хранится в `data/<slug>/contacts/<chatId>.json` как
+// `ContactRecord`. Запись атомарна (write-temp + rename), чтение лояльно к
+// отсутствию файла, листинг возвращает уже распарсенные записи. Round-trip
+// тест в `src/__tests__/storage/contacts.spec.ts` (Property 6).
+// ============================================================================
+
+import type { ContactRecord, Tier } from "../types.js";
+
+const VALID_TIERS: ReadonlyArray<Tier> = [
+  "cold-stranger",
+  "introduced",
+  "regular",
+  "trusted-partner",
+  "vip",
+  "blocked"
+];
+
+function contactsDir(slug: string): string {
+  return path.join(profileDir(slug), "contacts");
+}
+
+function contactFile(slug: string, chatId: string): string {
+  // chatId уже строка; на всякий случай нормализуем подозрительные символы.
+  const safe = chatId.replace(/[^A-Za-z0-9_-]/g, "_");
+  return path.join(contactsDir(slug), `${safe}.json`);
+}
+
+async function atomicWriteJson(file: string, data: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
+  await fs.rename(tmp, file);
+}
+
+function isValidContact(raw: unknown): raw is ContactRecord {
+  if (!raw || typeof raw !== "object") return false;
+  const r = raw as Partial<ContactRecord>;
+  if (typeof r.chatId !== "string" || r.chatId.length === 0) return false;
+  if (!r.tier || !VALID_TIERS.includes(r.tier)) return false;
+  if (typeof r.manualOverride !== "boolean") return false;
+  if (typeof r.createdAt !== "string" || typeof r.updatedAt !== "string") return false;
+  if (!r.score || typeof r.score !== "object") return false;
+  const s = r.score as Partial<ContactRecord["score"]>;
+  for (const k of ["relevance", "trust", "urgency", "annoyance", "spamScore"] as const) {
+    if (typeof s[k] !== "number" || !Number.isFinite(s[k])) return false;
+  }
+  return true;
+}
+
+/**
+ * Загружает контакт по `chatId`. Возвращает `null` если файл не существует
+ * или содержит невалидную структуру.
+ */
+export async function loadContact(slug: string, chatId: string): Promise<ContactRecord | null> {
+  try {
+    const raw = await fs.readFile(contactFile(slug, chatId), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!isValidContact(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Сохраняет контакт атомарно (write-temp + rename). */
+export async function saveContact(slug: string, contact: ContactRecord): Promise<void> {
+  if (!isValidContact(contact)) {
+    throw new Error(`invalid contact: ${JSON.stringify(contact).slice(0, 200)}`);
+  }
+  await atomicWriteJson(contactFile(slug, contact.chatId), contact);
+}
+
+/** Список контактов профиля (только валидные). */
+export async function listContacts(slug: string): Promise<ContactRecord[]> {
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(contactsDir(slug));
+  } catch {
+    return [];
+  }
+  const out: ContactRecord[] = [];
+  for (const name of entries) {
+    if (!name.endsWith(".json")) continue;
+    const chatId = name.slice(0, -".json".length);
+    const c = await loadContact(slug, chatId);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+/** Удаляет файл контакта. No-op если файла нет. */
+export async function deleteContact(slug: string, chatId: string): Promise<void> {
+  try {
+    await fs.unlink(contactFile(slug, chatId));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e;
+  }
+}
+
+
+// ============================================================================
+// Manager-mode: tickets storage (Task 3.5 manager-mode tasks.md).
+// ============================================================================
+
+import type { Ticket, TicketsFile, TicketState } from "../types.js";
+
+const VALID_TICKET_STATES: ReadonlyArray<TicketState> = [
+  "open",
+  "waiting-boss",
+  "answered",
+  "closed"
+];
+
+function ticketsFile(slug: string): string {
+  return path.join(profileDir(slug), "tickets.json");
+}
+
+const EMPTY_TICKETS: TicketsFile = { version: 1, nextId: 1, tickets: [] };
+
+function isValidTicket(raw: unknown): raw is Ticket {
+  if (!raw || typeof raw !== "object") return false;
+  const t = raw as Partial<Ticket>;
+  if (typeof t.id !== "string" || !/^#T-\d+$/.test(t.id)) return false;
+  if (typeof t.chatId !== "string" || t.chatId.length === 0) return false;
+  if (typeof t.summary !== "string") return false;
+  if (!t.state || !VALID_TICKET_STATES.includes(t.state)) return false;
+  if (typeof t.createdAt !== "string") return false;
+  if (!Array.isArray(t.history)) return false;
+  return true;
+}
+
+function isValidTicketsFile(raw: unknown): raw is TicketsFile {
+  if (!raw || typeof raw !== "object") return false;
+  const f = raw as Partial<TicketsFile>;
+  if (f.version !== 1) return false;
+  if (typeof f.nextId !== "number" || f.nextId < 1) return false;
+  if (!Array.isArray(f.tickets)) return false;
+  for (const t of f.tickets) {
+    if (!isValidTicket(t)) return false;
+  }
+  return true;
+}
+
+/** Загружает `tickets.json`. Возвращает пустой initial-state на отсутствие/повреждение. */
+export async function loadTickets(slug: string): Promise<TicketsFile> {
+  try {
+    const raw = await fs.readFile(ticketsFile(slug), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!isValidTicketsFile(parsed)) return { ...EMPTY_TICKETS };
+    return parsed;
+  } catch {
+    return { ...EMPTY_TICKETS };
+  }
+}
+
+/** Атомарно сохраняет `tickets.json` (write-temp + rename). */
+export async function saveTickets(slug: string, file: TicketsFile): Promise<void> {
+  if (!isValidTicketsFile(file)) {
+    throw new Error("invalid TicketsFile");
+  }
+  await atomicWriteJson(ticketsFile(slug), file);
+}
+
+/**
+ * Возвращает следующий целочисленный id для нового тикета и инкрементирует
+ * счётчик внутри переданного `TicketsFile`. Не сохраняет файл — caller
+ * отвечает за `saveTickets()`.
+ */
+export function nextTicketId(file: TicketsFile): number {
+  const id = file.nextId;
+  file.nextId = Math.min(2147483647, file.nextId + 1);
+  return id;
+}
+
+// ============================================================================
+// Manager-mode: mandate storage with hot-reload subscribe.
+// ============================================================================
+
+import { watch as fsWatch } from "node:fs";
+
+function mandateFile(slug: string): string {
+  return path.join(profileDir(slug), "mandate.md");
+}
+
+/** Читает `mandate.md`. Возвращает пустую строку если файла нет. */
+export async function loadMandate(slug: string): Promise<string> {
+  try {
+    return await fs.readFile(mandateFile(slug), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Сохраняет `mandate.md` атомарно. */
+export async function saveMandate(slug: string, text: string): Promise<void> {
+  const file = mandateFile(slug);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmp, text, "utf8");
+  await fs.rename(tmp, file);
+}
+
+export interface MandateSubscription {
+  /** Останавливает наблюдение и закрывает watcher. Идемпотентно. */
+  close(): void;
+}
+
+/**
+ * Подписывается на изменения `mandate.md` через `fs.watch`. Колбэк вызывается
+ * с новым содержимым (либо пустой строкой если файл удалили). Дедуп по строке —
+ * подряд идущие одинаковые значения не триггерят колбэк.
+ *
+ * Возвращает объект с `close()` для отписки. На несуществующий файл watcher
+ * запускается всё равно — он подхватит создание файла, как только тот появится
+ * в директории профиля.
+ */
+export function subscribeMandate(
+  slug: string,
+  onChange: (text: string) => void
+): MandateSubscription {
+  const file = mandateFile(slug);
+  let last: string | undefined;
+  let closed = false;
+
+  const refresh = async () => {
+    if (closed) return;
+    try {
+      const text = await fs.readFile(file, "utf8");
+      if (text !== last) {
+        last = text;
+        onChange(text);
+      }
+    } catch {
+      if (last !== "") {
+        last = "";
+        onChange("");
+      }
+    }
+  };
+
+  // Гарантируем существование директории профиля синхронно, иначе fs.watch
+  // упадёт с ENOENT на свежем профиле без папки `data/<slug>/`.
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+  } catch { /* ignore */ }
+
+  const watcher = fsWatch(path.dirname(file), { persistent: false }, (_event, name) => {
+    if (name === path.basename(file)) {
+      refresh().catch(() => { /* swallow */ });
+    }
+  });
+
+  // Первичная инициализация last — без вызова колбэка.
+  fs.readFile(file, "utf8").then(text => { last = text; }).catch(() => { last = ""; });
+
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      try { watcher.close(); } catch { /* ignore */ }
+    }
+  };
+}
+
+// ============================================================================
+// Manager-mode: config hot-reload (Task 4.8 manager-mode tasks.md, Req 17.7).
+// ============================================================================
+
+export interface ConfigSubscription {
+  /** Останавливает наблюдение и закрывает watcher. Идемпотентно. */
+  close(): void;
+}
+
+/**
+ * Подписывается на изменения `data/<slug>/config.json` через `fs.watch`.
+ * Колбэк вызывается с распарсенным `ProfileConfig` при каждом успешном
+ * изменении файла; невалидный JSON или ошибка чтения колбэк не дёргают.
+ *
+ * Используется runtime-ом для применения новых значений `gateLevel` и
+ * `whitelist` (Req 17.7) без рестарта профиля. Watcher запускается даже
+ * если файл ещё не существует — он подхватит создание.
+ *
+ * Возвращает объект с `close()` для отписки.
+ */
+export function subscribeConfig(
+  slug: string,
+  onChange: (cfg: ProfileConfig) => void
+): ConfigSubscription {
+  const file = path.join(profileDir(slug), "config.json");
+  let lastSerialized: string | undefined;
+  let closed = false;
+
+  const refresh = async () => {
+    if (closed) return;
+    const cfg = await readConfig(slug);
+    if (!cfg) return;
+    const serialized = JSON.stringify(cfg);
+    if (serialized !== lastSerialized) {
+      lastSerialized = serialized;
+      try { onChange(cfg); } catch { /* swallow */ }
+    }
+  };
+
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+  } catch { /* ignore */ }
+
+  const watcher = fsWatch(path.dirname(file), { persistent: false }, (_event, name) => {
+    if (name === path.basename(file)) {
+      refresh().catch(() => { /* swallow */ });
+    }
+  });
+
+  // Первичная инициализация snapshot — без вызова колбэка.
+  readConfig(slug)
+    .then(cfg => { if (cfg) lastSerialized = JSON.stringify(cfg); })
+    .catch(() => { /* swallow */ });
+
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      try { watcher.close(); } catch { /* ignore */ }
+    }
+  };
 }

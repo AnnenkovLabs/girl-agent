@@ -66,13 +66,13 @@ export interface InstalledAddon {
   installedFiles?: string[];
 }
 
-export const REGISTRY_URL = process.env.GIRL_AGENT_ADDON_REGISTRY
+export const REGISTRY_URL = process.env.MANAGER_AGENT_ADDON_REGISTRY
   ?? "https://raw.githubusercontent.com/TheSashaDev/girl-agent-addons/main/index.json";
 
 function addonsDir(): string {
-  const root = process.env.GIRL_AGENT_DATA
-    ? path.resolve(process.env.GIRL_AGENT_DATA, "..")
-    : path.join(os.homedir(), ".local", "share", "girl-agent");
+  const root = process.env.MANAGER_AGENT_DATA
+    ? path.resolve(process.env.MANAGER_AGENT_DATA, "..")
+    : path.join(os.homedir(), ".local", "share", "manager-agent");
   return path.join(root, "addons");
 }
 

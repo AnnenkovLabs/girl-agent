@@ -7,6 +7,10 @@ import { serveStatic } from "./static.js";
 import { attachWebSockets } from "./websocket.js";
 import { bus } from "./runtime-bus.js";
 import { registerProfileRoutes } from "./routes/profiles.js";
+import { registerMandateRoutes } from "./routes/mandate.js";
+import { registerWhitelistRoutes } from "./routes/whitelist.js";
+import { registerContactRoutes } from "./routes/contacts.js";
+import { registerInboxRoutes } from "./routes/inbox.js";
 import { registerPresetRoutes } from "./routes/presets.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerAddonRoutes } from "./routes/addons.js";
@@ -25,10 +29,10 @@ export interface WebUIServerOptions {
   noBrowser?: boolean;
 }
 
-const DEFAULT_PORT = Number(process.env.GIRL_AGENT_PORT ?? 3000);
+const DEFAULT_PORT = Number(process.env.MANAGER_AGENT_PORT ?? 3100);
 
 function isLikelyDocker(): boolean {
-  if (process.env.GIRL_AGENT_DOCKER || process.env.DOCKER_CONTAINER) return true;
+  if (process.env.MANAGER_AGENT_DOCKER || process.env.DOCKER_CONTAINER) return true;
   try {
     return os.release().toLowerCase().includes("docker") ||
       existsSync("/.dockerenv") ||
@@ -48,7 +52,7 @@ function firstExternalIPv4(): string | undefined {
 }
 
 function publicUrlForPort(port: number): string {
-  const explicit = process.env.GIRL_AGENT_PUBLIC_URL?.trim();
+  const explicit = process.env.MANAGER_AGENT_PUBLIC_URL?.trim();
   if (explicit) {
     try {
       const url = new URL(explicit);
@@ -62,7 +66,7 @@ function publicUrlForPort(port: number): string {
   return `http://${firstExternalIPv4() ?? "0.0.0.0"}:${port}`;
 }
 
-const DEFAULT_HOST = process.env.GIRL_AGENT_HOST ?? (isLikelyDocker() ? "0.0.0.0" : "127.0.0.1");
+const DEFAULT_HOST = process.env.MANAGER_AGENT_HOST ?? (isLikelyDocker() ? "0.0.0.0" : "127.0.0.1");
 
 export interface WebUIInstance {
   server: http.Server;
@@ -81,6 +85,10 @@ function buildRouter(): Router {
   const r = new Router();
   registerAuthRoutes(r);
   registerProfileRoutes(r);
+  registerMandateRoutes(r);
+  registerWhitelistRoutes(r);
+  registerContactRoutes(r);
+  registerInboxRoutes(r);
   registerPresetRoutes(r);
   registerSystemRoutes(r);
   registerAddonRoutes(r);

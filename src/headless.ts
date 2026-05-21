@@ -1,6 +1,6 @@
 import readline from "node:readline";
 import type { Runtime, RuntimeEvent } from "./engine/runtime.js";
-import { findStage } from "./presets/stages.js";
+import { legacyStage } from "./engine/legacy-stage.js";
 import { readRelationship, readMd, readSessionLog, sessionDate } from "./storage/md.js";
 import type { ProfileConfig } from "./types.js";
 
@@ -89,7 +89,7 @@ export async function runHeadlessJsonEvents(rt: Runtime): Promise<void> {
             t: Date.now(),
             paused,
             profile: profileSummary(rt.cfg),
-            stage: { id: r.stage, num: findStage(r.stage as ProfileConfig["stage"]).num, label: findStage(r.stage as ProfileConfig["stage"]).label },
+            stage: { id: r.stage, num: legacyStage(r.stage as ProfileConfig["stage"]).num, label: legacyStage(r.stage as ProfileConfig["stage"]).label },
             score: r.score
           });
           return;
@@ -125,7 +125,7 @@ export async function runHeadlessJsonEvents(rt: Runtime): Promise<void> {
 }
 
 function profileSummary(cfg: ProfileConfig) {
-  const stage = findStage(cfg.stage);
+  const stage = legacyStage(cfg.stage);
   return {
     slug: cfg.slug,
     name: cfg.name,

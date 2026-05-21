@@ -1,10 +1,10 @@
 {
-  "name": "@thesashadev/girl-agent",
-  "version": "0.4.4",
-  "description": "Telegram AI persona engine with memory, schedule, relationship state and MTProto userbot mode.",
+  "name": "@thesashadev/manager-agent",
+  "version": "0.5.0",
+  "description": "AI-менеджер в Telegram: персональный секретарь с эскалацией боссу. Форк @thesashadev/girl-agent.",
   "type": "module",
   "bin": {
-    "girl-agent": "dist/cli.js"
+    "manager-agent": "dist/cli.js"
   },
   "main": "dist/cli.js",
   "files": [
@@ -23,19 +23,31 @@
     "dev:webui": "cd webui && npm run dev",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "prepublishOnly": "npm run build"
   },
   "author": "TheSashaDev (void)",
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shxpe0x/girl-agent-manager.git"
+  },
+  "homepage": "https://github.com/shxpe0x/girl-agent-manager#readme",
+  "bugs": {
+    "url": "https://github.com/shxpe0x/girl-agent-manager/issues"
+  },
   "keywords": [
     "telegram",
     "ai",
     "agent",
+    "manager",
+    "secretary",
     "webui",
     "mcp",
     "userbot",
     "llm",
-    "persona",
     "anthropic",
     "openai"
   ],
@@ -55,9 +67,11 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
+    "fast-check": "^3.23.1",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   },
   "overrides": {
     "ip-address": "^10.2.0"

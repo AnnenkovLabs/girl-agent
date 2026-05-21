@@ -126,11 +126,32 @@ function wrongLayout(word: string, i: number): string {
 }
 
 export interface TypoOptions {
-  /** Общий уровень опечаток, 0..1. По умолчанию 0.06 (примерно 1 опечатка на 16 слов). */
+  /**
+   * Общий уровень опечаток, 0..1. По умолчанию `MANAGER_TYPO_DENSITY` (0.025) —
+   * это примерно в 2.4 раза реже, чем дефолт оригинала girl-agent (0.06).
+   * Соответствует Req 13.5: вероятность опечатки на символ строго меньше,
+   * чем в исходном пресете.
+   */
   intensity?: number;
   /** Сколько максимум опечаток ставить на одно слово. По умолчанию 1. */
   maxPerWord?: number;
 }
+
+/**
+ * Плотность опечаток в manager-mode по умолчанию.
+ *
+ * Смягчена относительно оригинала girl-agent (0.06), потому что менеджер
+ * пишет в деловом контексте и слишком много опечаток выглядят
+ * непрофессионально. Перекрывается явным `intensity` в `TypoOptions`.
+ */
+export const MANAGER_TYPO_DENSITY = 0.025;
+
+/**
+ * Плотность опечаток в оригинале girl-agent (0.06). Вынесен в константу
+ * для тестов: значение `MANAGER_TYPO_DENSITY < ORIGINAL_TYPO_DENSITY`
+ * проверяется в Req 13.5.
+ */
+export const ORIGINAL_TYPO_DENSITY = 0.06;
 
 const TYPO_OPS = [replaceWithNeighbor, replaceWithNeighbor, dropChar, dupChar, swapAdjacent, wrongLayout];
 
@@ -163,7 +184,7 @@ const WORD_RE = /([A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+)/g;
  */
 export function injectTypos(text: string, opts: TypoOptions = {}): string {
   const merged: Required<TypoOptions> = {
-    intensity: opts.intensity ?? 0.06,
+    intensity: opts.intensity ?? MANAGER_TYPO_DENSITY,
     maxPerWord: opts.maxPerWord ?? 1
   };
   if (merged.intensity <= 0) return text;
@@ -182,15 +203,20 @@ export function injectTypos(text: string, opts: TypoOptions = {}): string {
  *
  * Решение зависит от vibe/communication: "warm" — реже опечаток,
  * "short"/"bursty" — чаще. Возвращает intensity (0 = не ставить).
+ *
+ * В manager-mode плотность смягчена примерно в 2 раза относительно
+ * оригинала girl-agent (Req 13.5): менеджер не должен заваливать клиента
+ * опечатками, и LLM-секретарь должен выглядеть профессионально.
  */
 export function pickTypoIntensity(opts: { messageStyle?: string; vibe?: string; bubbles?: number }): number {
-  // Базово редко.
-  let base = 0.04;
-  if (opts.messageStyle === "bursty" || opts.vibe === "short") base = 0.08;
-  if (opts.messageStyle === "longform" || opts.vibe === "warm") base = 0.025;
+  // Базово редко (раньше было 0.04, в manager-mode ≈ половина).
+  let base = 0.02;
+  if (opts.messageStyle === "bursty" || opts.vibe === "short") base = 0.04;
+  if (opts.messageStyle === "longform" || opts.vibe === "warm") base = 0.012;
   // Если много пузырей — допустимо чуть больше опечаток.
-  if ((opts.bubbles ?? 1) >= 3) base += 0.02;
-  // Каждую отдельную реплику бросаем кубик: 60% реплик вообще без опечаток.
-  if (Math.random() < 0.6) return 0;
+  if ((opts.bubbles ?? 1) >= 3) base += 0.01;
+  // Каждую отдельную реплику бросаем кубик: 70% реплик вообще без опечаток
+  // (раньше было 60% — менеджер ещё чище).
+  if (Math.random() < 0.7) return 0;
   return base;
 }

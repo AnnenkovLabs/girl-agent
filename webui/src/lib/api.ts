@@ -22,6 +22,18 @@ export interface ProfileConfig {
   communication?: { notifications: string; messageStyle: string; initiative: string; lifeSharing: string };
   personaNotes?: string;
   busySchedule?: { dayOfWeek: number; startHour: number; endHour: number; reason?: string }[];
+  // ===== Manager-mode (см. .kiro/specs/manager-mode/design.md § 3.1) =====
+  tone?: "formal-вы" | "friendly-ты" | "mixed-by-tier";
+  personaStyle?: "gender-neutral-assistant" | "female-secretary" | "male-secretary";
+  gateLevel?: "open" | "gated" | "whitelist";
+  afterHoursPolicy?: "silent" | "auto-reply" | "vip-only";
+  proactiveClients?: boolean;
+  proactiveBoss?: boolean;
+  whitelist?: ({ kind: "id"; chatId: number } | { kind: "username"; username: string })[];
+  escalationTimeoutMin?: number;
+  digestPeriodHours?: number;
+  digestTime?: string;
+  profileType?: "manager";
 }
 
 export interface LLMPreset {
@@ -232,8 +244,113 @@ export const api = {
     return req<{ sessionString: string; apiId?: number; apiHash?: string }>(
       "POST", "/api/tg/userbot/verify-password", payload
     );
+  },
+
+  // === Manager-mode: contacts (Task 5.7, Req 10) ===
+  async listContacts(slug: string, opts: { tier?: ContactTier; sort?: "asc" | "desc" } = {}) {
+    const qs = new URLSearchParams();
+    if (opts.tier) qs.set("tier", opts.tier);
+    if (opts.sort) qs.set("sort", opts.sort);
+    const q = qs.toString();
+    return req<{ contacts: ContactSummary[] }>(
+      "GET",
+      `/api/contacts/${encodeURIComponent(slug)}${q ? `?${q}` : ""}`
+    );
+  },
+  async patchContact(
+    slug: string,
+    chatId: string,
+    patch: { tier?: ContactTier; notes?: string }
+  ) {
+    return req<{ contact: ContactSummary }>(
+      "PATCH",
+      `/api/contacts/${encodeURIComponent(slug)}/${encodeURIComponent(chatId)}`,
+      patch
+    );
+  },
+
+  // === Manager-mode: inbox (Task 5.8, Req 11) ===
+  async listInbox(slug: string, opts: { state?: TicketState | "all" } = {}) {
+    const qs = new URLSearchParams();
+    if (opts.state && opts.state !== "all") qs.set("state", opts.state);
+    const q = qs.toString();
+    return req<{ tickets: TicketSummary[] }>(
+      "GET",
+      `/api/inbox/${encodeURIComponent(slug)}${q ? `?${q}` : ""}`
+    );
+  },
+  async getTicket(slug: string, ticketId: string) {
+    return req<{ ticket: TicketSummary }>(
+      "GET",
+      `/api/inbox/${encodeURIComponent(slug)}/${encodeURIComponent(ticketId)}`
+    );
+  },
+  async replyTicket(slug: string, ticketId: string, text: string) {
+    return req<{ ticket: TicketSummary }>(
+      "POST",
+      `/api/inbox/${encodeURIComponent(slug)}/${encodeURIComponent(ticketId)}/reply`,
+      { text }
+    );
+  },
+  async cancelTicket(slug: string, ticketId: string) {
+    return req<{ ticket: TicketSummary }>(
+      "POST",
+      `/api/inbox/${encodeURIComponent(slug)}/${encodeURIComponent(ticketId)}/cancel`
+    );
   }
 };
+
+export type ContactTier =
+  | "cold-stranger"
+  | "introduced"
+  | "regular"
+  | "trusted-partner"
+  | "vip"
+  | "blocked";
+
+export interface ContactSummary {
+  chatId: string;
+  username?: string;
+  tier: ContactTier;
+  notes?: string;
+  manualOverride: boolean;
+  updatedAt: string;
+  createdAt: string;
+  lastMessageAt?: string;
+  score?: {
+    relevance: number;
+    trust: number;
+    urgency: number;
+    annoyance: number;
+    spamScore: number;
+  };
+}
+
+export type TicketState = "open" | "waiting-boss" | "answered" | "closed";
+
+export interface TicketTransition {
+  ts: string;
+  from: TicketState | "<initial>";
+  to: TicketState;
+  reason: string;
+  by: "system" | "boss" | "owner-webui";
+}
+
+export interface TicketSummary {
+  id: string;
+  chatId: string;
+  clientUsername?: string;
+  summary: string;
+  state: TicketState;
+  createdAt: string;
+  closedAt?: string;
+  bossReplyRaw?: string;
+  bossReplyAt?: string;
+  clientReply?: string;
+  clientReplyAt?: string;
+  llmDraftForBoss?: string;
+  history: TicketTransition[];
+}
 
 export function logsSocket(slug: string, onEvent: (e: { type: string; text?: string; t: number }) => void): () => void {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";

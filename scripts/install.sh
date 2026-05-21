@@ -1,13 +1,13 @@
 #!/usr/bin/env sh
-# girl-agent — universal installer
+# manager-agent — universal installer
 #
-#   curl -fsSL https://raw.githubusercontent.com/TheSashaDev/girl-agent/master/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/shxpe0x/girl-agent-manager/master/scripts/install.sh | sh
 #
 # Что делает:
 #   1. Не требует node на машине — скачивает official Node.js 22 LTS в локальный
-#      каталог ~/.local/share/girl-agent/runtime/ (без sudo, без /usr/local).
-#   2. Ставит сам пакет `@thesashadev/girl-agent` в тот же изолированный prefix.
-#   3. Кладёт shim-скрипт `girl-agent` в ~/.local/bin/.
+#      каталог ~/.local/share/manager-agent/runtime/ (без sudo, без /usr/local).
+#   2. Ставит сам пакет `@thesashadev/manager-agent` в тот же изолированный prefix.
+#   3. Кладёт shim-скрипт `manager-agent` в ~/.local/bin/.
 #   4. Если уже есть docker — предлагает docker-вариант (ещё меньше зависит от
 #      системы, ноль шансов на конфликты версий).
 #   5. Не трогает существующий node, npm, ничего глобально.
@@ -20,19 +20,19 @@ set -eu
 # -------- pretty output --------
 _color() { if [ -t 2 ] && command -v tput >/dev/null 2>&1; then printf "%s" "$(tput "$@")"; fi; }
 B=$(_color bold); D=$(_color sgr0); G=$(_color setaf 2); R=$(_color setaf 1); Y=$(_color setaf 3)
-say() { printf "%s[girl-agent]%s %s\n" "$B" "$D" "$1" >&2; }
-ok()  { printf "%s[girl-agent]%s %s%s%s\n" "$B" "$D" "$G" "$1" "$D" >&2; }
-warn(){ printf "%s[girl-agent]%s %s%s%s\n" "$B" "$D" "$Y" "$1" "$D" >&2; }
-die() { printf "%s[girl-agent]%s %sошибка:%s %s\n" "$B" "$D" "$R" "$D" "$1" >&2; exit 1; }
+say() { printf "%s[manager-agent]%s %s\n" "$B" "$D" "$1" >&2; }
+ok()  { printf "%s[manager-agent]%s %s%s%s\n" "$B" "$D" "$G" "$1" "$D" >&2; }
+warn(){ printf "%s[manager-agent]%s %s%s%s\n" "$B" "$D" "$Y" "$1" "$D" >&2; }
+die() { printf "%s[manager-agent]%s %sошибка:%s %s\n" "$B" "$D" "$R" "$D" "$1" >&2; exit 1; }
 
 # -------- CLI flags --------
 MODE="auto"        # auto | local | docker
 NODE_VERSION="22.12.0"
 PKG_VERSION="latest"
-PREFIX="$HOME/.local/share/girl-agent"
+PREFIX="$HOME/.local/share/manager-agent"
 BIN_DIR="$HOME/.local/bin"
-DATA_DIR="$HOME/.local/share/girl-agent/data"
-DOCKER_IMAGE="ghcr.io/thesashadev/girl-agent:latest"
+DATA_DIR="$HOME/.local/share/manager-agent/data"
+DOCKER_IMAGE="ghcr.io/shxpe0x/girl-agent-manager:latest"
 SKIP_PATH=0
 QUIET=0
 
@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
     --skip-path) SKIP_PATH=1 ;;
     --quiet|-q) QUIET=1 ;;
     -h|--help) cat <<EOF
-girl-agent universal installer
+manager-agent universal installer
 
 usage:
   curl -fsSL .../install.sh | sh
@@ -58,18 +58,18 @@ flags:
   --docker            форсировать docker-вариант
   --local             форсировать локальную ноду + npm install
   --node-version=X.Y.Z   нужная версия node (по умолч. ${NODE_VERSION})
-  --version=X.Y.Z     версия @thesashadev/girl-agent (по умолч. latest)
-  --prefix=<dir>      куда ставить (по умолч. \$HOME/.local/share/girl-agent)
+  --version=X.Y.Z     версия @thesashadev/manager-agent (по умолч. latest)
+  --prefix=<dir>      куда ставить (по умолч. \$HOME/.local/share/manager-agent)
   --bin-dir=<dir>     куда положить shim (по умолч. \$HOME/.local/bin)
   --skip-path         не модифицировать ~/.bashrc / ~/.zshrc
   -q, --quiet         тише
 
 После установки:
-  girl-agent              # запуск ink-визарда (нужен TTY)
-  girl-agent server --help
+  manager-agent              # запуск ink-визарда (нужен TTY)
+  manager-agent server --help
 
 Удаление:
-  rm -rf "${PREFIX}" "${BIN_DIR}/girl-agent"
+  rm -rf "${PREFIX}" "${BIN_DIR}/manager-agent"
 EOF
       exit 0 ;;
     *) die "неизвестный флаг: $1 (--help для справки)" ;;
@@ -116,8 +116,8 @@ say "детект: ${OS}-${ARCH}"
 if [ "$OS" = "termux" ]; then
   TERMUX_RUNTIME_PREFIX="${TERMUX_NATIVE_PREFIX:-/data/data/com.termux/files/usr}"
   BIN_DIR="${TERMUX_RUNTIME_PREFIX}/bin"
-  # runtime использует os.homedir()/.local/share/girl-agent/data — на Termux это валидный путь
-  DATA_DIR="$HOME/.local/share/girl-agent/data"
+  # runtime использует os.homedir()/.local/share/manager-agent/data — на Termux это валидный путь
+  DATA_DIR="$HOME/.local/share/manager-agent/data"
   MODE="termux"
   say "детектирован Termux (Android) — runtime в ${TERMUX_RUNTIME_PREFIX}, data в $DATA_DIR"
 fi
@@ -153,12 +153,12 @@ install_docker() {
     return
   fi
 
-  cat >"$BIN_DIR/girl-agent" <<'SHIM'
+  cat >"$BIN_DIR/manager-agent" <<'SHIM'
 #!/usr/bin/env sh
-# girl-agent docker shim
+# manager-agent docker shim
 set -eu
-IMAGE="${GIRL_AGENT_IMAGE:-ghcr.io/thesashadev/girl-agent:latest}"
-DATA="${GIRL_AGENT_DATA_HOST:-$HOME/.local/share/girl-agent/data}"
+IMAGE="${MANAGER_AGENT_IMAGE:-ghcr.io/shxpe0x/girl-agent-manager:latest}"
+DATA="${MANAGER_AGENT_DATA_HOST:-$HOME/.local/share/manager-agent/data}"
 mkdir -p "$DATA"
 
 # Если stdin/stdout оба TTY — запускаем интерактивно (ink-визард работает).
@@ -170,16 +170,16 @@ fi
 
 exec docker run --rm $TTY_FLAGS \
   -v "$DATA:/data" \
-  -p "${GIRL_AGENT_PORT:-3000}:${GIRL_AGENT_PORT:-3000}" \
+  -p "${MANAGER_AGENT_PORT:-3100}:${MANAGER_AGENT_PORT:-3100}" \
   --user "$(id -u):$(id -g)" \
-  -e "GIRL_AGENT_DATA=/data" \
-  -e "GIRL_AGENT_HOST=0.0.0.0" \
+  -e "MANAGER_AGENT_DATA=/data" \
+  -e "MANAGER_AGENT_HOST=0.0.0.0" \
   -e "HOME=/tmp" \
   -e "TERM=${TERM:-xterm-256color}" \
   "$IMAGE" "$@"
 SHIM
-  chmod +x "$BIN_DIR/girl-agent"
-  ok "docker shim установлен: ${BIN_DIR}/girl-agent"
+  chmod +x "$BIN_DIR/manager-agent"
+  ok "docker shim установлен: ${BIN_DIR}/manager-agent"
 }
 
 # -------- mode: local --------
@@ -213,19 +213,19 @@ install_local() {
   NPM="$PREFIX/runtime/bin/npm"
   [ -x "$NODE" ] || die "node не нашёлся в $PREFIX/runtime/bin/"
 
-  say "ставлю @thesashadev/girl-agent@${PKG_VERSION} в локальный prefix..."
+  say "ставлю @thesashadev/manager-agent@${PKG_VERSION} в локальный prefix..."
   mkdir -p "$PREFIX/lib"
   # `npm install --prefix <dir>` — изолированная установка, не трогает глобал
-  "$NODE" "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --silent "@thesashadev/girl-agent@${PKG_VERSION}" \
+  "$NODE" "$NPM" install --prefix "$PREFIX/lib" --no-audit --no-fund --silent "@thesashadev/manager-agent@${PKG_VERSION}" \
     || die "npm install не удался"
 
-  cat >"$BIN_DIR/girl-agent" <<EOF
+  cat >"$BIN_DIR/manager-agent" <<EOF
 #!/usr/bin/env sh
-# girl-agent local node shim — generated by install.sh
-exec "${PREFIX}/runtime/bin/node" "${PREFIX}/lib/node_modules/@thesashadev/girl-agent/dist/cli.js" "\$@"
+# manager-agent local node shim — generated by install.sh
+exec "${PREFIX}/runtime/bin/node" "${PREFIX}/lib/node_modules/@thesashadev/manager-agent/dist/cli.js" "\$@"
 EOF
-  chmod +x "$BIN_DIR/girl-agent"
-  ok "локальная установка готова: ${BIN_DIR}/girl-agent"
+  chmod +x "$BIN_DIR/manager-agent"
+  ok "локальная установка готова: ${BIN_DIR}/manager-agent"
   ok "node:    $("$NODE" --version) (изолированная)"
   ok "package: ${PKG_VERSION}"
 }
@@ -253,8 +253,8 @@ install_termux() {
 
   # Глобальная установка в Termux работает прямолинейно — npm пишет в $PREFIX/lib/node_modules
   # и кладёт shim в $PREFIX/bin. Никаких sudo не нужно.
-  say "ставлю @thesashadev/girl-agent@${PKG_VERSION} глобально (в Termux $PREFIX)"
-  npm install -g --no-audit --no-fund --omit=optional --ignore-scripts "@thesashadev/girl-agent@${PKG_VERSION}" >&2 \
+  say "ставлю @thesashadev/manager-agent@${PKG_VERSION} глобально (в Termux $PREFIX)"
+  npm install -g --no-audit --no-fund --omit=optional --ignore-scripts "@thesashadev/manager-agent@${PKG_VERSION}" >&2 \
     || die "npm install -g не удался"
 
   ok "Termux-установка готова"
@@ -281,7 +281,7 @@ case ":$PATH:" in
   *)
     if [ "$SKIP_PATH" = "1" ]; then
       warn "${BIN_DIR} не в PATH; --skip-path указан, ничего не дописываю."
-      warn "запускай через полный путь: ${BIN_DIR}/girl-agent"
+      warn "запускай через полный путь: ${BIN_DIR}/manager-agent"
     else
       RC=""
       [ -f "$HOME/.zshrc" ] && RC="$HOME/.zshrc"
@@ -289,7 +289,7 @@ case ":$PATH:" in
       [ -z "$RC" ] && [ -f "$HOME/.profile" ] && RC="$HOME/.profile"
       if [ -n "$RC" ]; then
         if ! grep -qF ".local/bin" "$RC" 2>/dev/null; then
-          printf '\n# added by girl-agent install.sh\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$RC"
+          printf '\n# added by manager-agent install.sh\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$RC"
           ok "добавил .local/bin в PATH через $RC"
           warn "перезапусти shell или выполни: export PATH=\"\$HOME/.local/bin:\$PATH\""
         else
@@ -308,18 +308,18 @@ if [ "$OS" = "termux" ]; then
 
 готово (Termux). что дальше:
 
-  ${B}girl-agent${D}                    # открывает WebUI на http://localhost:3000
-  ${B}girl-agent server --help${D}      # серверный режим (config-файл / env vars)
+  ${B}manager-agent${D}                    # открывает WebUI на http://localhost:3100
+  ${B}manager-agent server --help${D}      # серверный режим (config-файл / env vars)
 
 профили хранятся в: ${DATA_DIR}
-открой WebUI в браузере на том же телефоне: http://localhost:3000
+открой WebUI в браузере на том же телефоне: http://localhost:3100
 чтобы не убивался процесс при блокировке экрана:
   ${B}termux-wake-lock${D}
 проверить нет ли проблем с storage:
   ${B}termux-setup-storage${D}
 
-обновить: npm install -g @thesashadev/girl-agent@latest
-удалить: npm uninstall -g @thesashadev/girl-agent
+обновить: npm install -g @thesashadev/manager-agent@latest
+удалить: npm uninstall -g @thesashadev/manager-agent
 
 EOF
 else
@@ -327,14 +327,14 @@ else
 
 готово. что дальше:
 
-  ${B}girl-agent${D}                    # открывает WebUI на http://localhost:3000
-  ${B}girl-agent server --help${D}      # серверный режим (config-файл / env vars)
-  ${B}girl-agent server --print-config > bot.json${D}
-  ${B}girl-agent server --config bot.json --headless${D}
+  ${B}manager-agent${D}                    # открывает WebUI на http://localhost:3100
+  ${B}manager-agent server --help${D}      # серверный режим (config-файл / env vars)
+  ${B}manager-agent server --print-config > bot.json${D}
+  ${B}manager-agent server --config bot.json --headless${D}
 
 профили хранятся в: ${DATA_DIR}
 обновить: запусти install.sh ещё раз
-удалить: rm -rf ${PREFIX} ${BIN_DIR}/girl-agent
+удалить: rm -rf ${PREFIX} ${BIN_DIR}/manager-agent
 
 EOF
 fi
