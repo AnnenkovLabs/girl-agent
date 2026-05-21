@@ -7,6 +7,7 @@ import { serveStatic } from "./static.js";
 import { attachWebSockets } from "./websocket.js";
 import { bus } from "./runtime-bus.js";
 import { registerProfileRoutes } from "./routes/profiles.js";
+import { registerMandateRoutes } from "./routes/mandate.js";
 import { registerPresetRoutes } from "./routes/presets.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerAddonRoutes } from "./routes/addons.js";
@@ -81,6 +82,7 @@ function buildRouter(): Router {
   const r = new Router();
   registerAuthRoutes(r);
   registerProfileRoutes(r);
+  registerMandateRoutes(r);
   registerPresetRoutes(r);
   registerSystemRoutes(r);
   registerAddonRoutes(r);
