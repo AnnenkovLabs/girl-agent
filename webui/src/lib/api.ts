@@ -244,8 +244,57 @@ export const api = {
     return req<{ sessionString: string; apiId?: number; apiHash?: string }>(
       "POST", "/api/tg/userbot/verify-password", payload
     );
+  },
+
+  // === Manager-mode: contacts (Task 5.7, Req 10) ===
+  async listContacts(slug: string, opts: { tier?: ContactTier; sort?: "asc" | "desc" } = {}) {
+    const qs = new URLSearchParams();
+    if (opts.tier) qs.set("tier", opts.tier);
+    if (opts.sort) qs.set("sort", opts.sort);
+    const q = qs.toString();
+    return req<{ contacts: ContactSummary[] }>(
+      "GET",
+      `/api/contacts/${encodeURIComponent(slug)}${q ? `?${q}` : ""}`
+    );
+  },
+  async patchContact(
+    slug: string,
+    chatId: string,
+    patch: { tier?: ContactTier; notes?: string }
+  ) {
+    return req<{ contact: ContactSummary }>(
+      "PATCH",
+      `/api/contacts/${encodeURIComponent(slug)}/${encodeURIComponent(chatId)}`,
+      patch
+    );
   }
 };
+
+export type ContactTier =
+  | "cold-stranger"
+  | "introduced"
+  | "regular"
+  | "trusted-partner"
+  | "vip"
+  | "blocked";
+
+export interface ContactSummary {
+  chatId: string;
+  username?: string;
+  tier: ContactTier;
+  notes?: string;
+  manualOverride: boolean;
+  updatedAt: string;
+  createdAt: string;
+  lastMessageAt?: string;
+  score?: {
+    relevance: number;
+    trust: number;
+    urgency: number;
+    annoyance: number;
+    spamScore: number;
+  };
+}
 
 export function logsSocket(slug: string, onEvent: (e: { type: string; text?: string; t: number }) => void): () => void {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";

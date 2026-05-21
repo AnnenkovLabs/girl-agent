@@ -14,6 +14,7 @@ import { RelationshipPage } from "./pages/RelationshipPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { SetupFlow } from "./pages/SetupFlow";
 import { SetupManagerPage, isSetupManagerPath } from "./pages/SetupManagerPage";
+import { ContactsPage, isContactsPath } from "./pages/ContactsPage";
 import { AuthGate } from "./components/AuthGate";
 
 export function App() {
@@ -24,10 +25,15 @@ export function App() {
   const init = useStore(s => s.init);
 
   // Лёгкий path-based роут: визард менеджера живёт по `/setup/manager`,
-  // остальное — обычный one-page UI с табами в zustand-стейте.
+  // страница контактов — по `/contacts/:slug`. Остальное — обычный one-page
+  // UI с табами в zustand-стейте.
   const [setupManager, setSetupManager] = useState<boolean>(isSetupManagerPath());
+  const [contactsPage, setContactsPage] = useState<boolean>(isContactsPath());
   useEffect(() => {
-    function onPop() { setSetupManager(isSetupManagerPath()); }
+    function onPop() {
+      setSetupManager(isSetupManagerPath());
+      setContactsPage(isContactsPath());
+    }
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -46,6 +52,8 @@ export function App() {
     <AuthGate>
       {setupManager ? (
         <SetupManagerPage />
+      ) : contactsPage ? (
+        <ContactsPage />
       ) : (
         <div className="app-shell">
           <aside className="sidebar" data-open={sidebarOpen}>
@@ -68,7 +76,7 @@ export function App() {
       <ApplyPill />
       <Toasts />
       <CommandModal />
-      {showSetup && !setupManager && <SetupFlow />}
+      {showSetup && !setupManager && !contactsPage && <SetupFlow />}
     </AuthGate>
   );
 }
