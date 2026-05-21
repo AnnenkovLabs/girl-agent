@@ -16,6 +16,7 @@ import { legacyStage } from "./engine/legacy-stage.js";
 import { defaultTzForNationality, parseTzFlag } from "./data/timezones.js";
 import { pickRandomNames } from "./data/names.js";
 import { communicationProfileLabel, deriveLegacyVibe, findCommunicationPreset, normalizeCommunicationProfile } from "./presets/communication.js";
+import { describeMissingProfile } from "./cli-args.js";
 
 const nodeMajor = Number(process.versions.node.split(".")[0] ?? 0);
 if (nodeMajor < 18) {
@@ -165,6 +166,16 @@ async function main(): Promise<void> {
     const generated = await generatePersonaPack(llm, cfg.slug, cfg.name, cfg.age, cfg.nationality, personaNotesForGeneration(cfg));
     cfg.busySchedule = generated.busySchedule;
     await writeConfig(cfg);
+  }
+
+  // Если указан --profile=<slug>, заранее проверяем, что такой профиль существует.
+  // Не существует → exit≠0 со списком доступных (Requirement 20.3, 20.4).
+  if (typeof argv.profile === "string" && !haveEnoughForFlags) {
+    const existing = await listProfiles();
+    if (!existing.includes(argv.profile)) {
+      process.stderr.write(describeMissingProfile(argv.profile, existing) + "\n");
+      process.exit(1);
+    }
   }
 
   // ===== WebUI entrypoint =====
