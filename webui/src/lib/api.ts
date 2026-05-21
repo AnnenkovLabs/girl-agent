@@ -22,6 +22,18 @@ export interface ProfileConfig {
   communication?: { notifications: string; messageStyle: string; initiative: string; lifeSharing: string };
   personaNotes?: string;
   busySchedule?: { dayOfWeek: number; startHour: number; endHour: number; reason?: string }[];
+  // ===== Manager-mode (см. .kiro/specs/manager-mode/design.md § 3.1) =====
+  tone?: "formal-вы" | "friendly-ты" | "mixed-by-tier";
+  personaStyle?: "gender-neutral-assistant" | "female-secretary" | "male-secretary";
+  gateLevel?: "open" | "gated" | "whitelist";
+  afterHoursPolicy?: "silent" | "auto-reply" | "vip-only";
+  proactiveClients?: boolean;
+  proactiveBoss?: boolean;
+  whitelist?: ({ kind: "id"; chatId: number } | { kind: "username"; username: string })[];
+  escalationTimeoutMin?: number;
+  digestPeriodHours?: number;
+  digestTime?: string;
+  profileType?: "manager";
 }
 
 export interface LLMPreset {
