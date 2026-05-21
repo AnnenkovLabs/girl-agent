@@ -8,6 +8,7 @@ import { attachWebSockets } from "./websocket.js";
 import { bus } from "./runtime-bus.js";
 import { registerProfileRoutes } from "./routes/profiles.js";
 import { registerMandateRoutes } from "./routes/mandate.js";
+import { registerWhitelistRoutes } from "./routes/whitelist.js";
 import { registerPresetRoutes } from "./routes/presets.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerAddonRoutes } from "./routes/addons.js";
@@ -83,6 +84,7 @@ function buildRouter(): Router {
   registerAuthRoutes(r);
   registerProfileRoutes(r);
   registerMandateRoutes(r);
+  registerWhitelistRoutes(r);
   registerPresetRoutes(r);
   registerSystemRoutes(r);
   registerAddonRoutes(r);
