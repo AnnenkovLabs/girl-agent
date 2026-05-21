@@ -1,22 +1,57 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+Дата: 2026-05-21
+
+Manager-mode — большой ребренд `girl-agent` → `@thesashadev/manager-agent`. Романтический бот заменён на AI-секретаря, который умеет эскалировать боссу через тикеты с ID `#T-N`. Фичи описаны в `.kiro/specs/manager-mode/{requirements,design,tasks}.md`. Спека и спека-тесты (8 PBT-свойств, 322 юнит-теста) — это контракт.
 
 ### Added
 
-- `webui/routes/inbox.ts` — `GET /api/inbox/:slug` со списком тикетов (фильтр `state` ∈ `open`/`waiting-boss`/`answered`/`closed`/`all`, сортировка `createdAt` desc/asc), `GET /api/inbox/:slug/:ticketId` (детали с `llmDraftForBoss` для `waiting-boss`), `POST /api/inbox/:slug/:ticketId/reply` (валидация 1..4096 символов, прогон через `composeClientReplyFromBoss` confidentiality-guard, `waiting-boss` → `answered` с `bossReplyRaw`/`clientReply`), `POST /api/inbox/:slug/:ticketId/cancel` (`open`/`waiting-boss` → `closed`); per-slug мьютекс на reply/cancel, отказ повторного ответа на `answered`/`closed` (Task 5.5, Req 11.1–11.8).
-- `webui/routes/profiles.ts` — расширенная валидация `POST /api/profiles` для манагерских полей (`ownerId` 1..9999999999999, `tone`, `personaStyle`, `gateLevel`, `afterHoursPolicy`, `proactiveClients`/`proactiveBoss`, `mandate` ≤4000, `whitelist` non-empty при `gateLevel=whitelist`, `escalationTimeoutMin` 5..1440, `digestPeriodHours` 1..168, `digestTime` HH:MM); атомарное создание `data/<slug>/` (config.json + mandate.md + tickets.json + contacts/) с rollback при ошибке любого шага; HTTP 400 со списком ошибок при невалидном payload (Task 5.1, Req 1.1–1.10).
-- `webui/routes/whitelist.ts` — `GET /api/whitelist/:slug` (читает `cfg.whitelist`, дефолт `[]`) и `PUT /api/whitelist/:slug` с валидацией каждой записи (`chatId` 1..9999999999999 для `kind=id`, длина 3..32 и `[a-zA-Z0-9_]` для `kind=username`, обрезка лидирующего `@`, lowercase) и отказом по дубликатам внутри списка; атомарная замена через `writeConfig`, hot-reload в runtime через существующий `subscribeConfig` (≤5 секунд) (Task 5.3, Req 1.9, 17.6, 17.7).
-- `engine/digests.ts` — `composeDailyDigest(slug)` собирает сводку по открытым тикетам, ожидающим босса и новым контактам за период (по `createdAt`); пишет ссылку `Inbox: /inbox/<slug>`. `scheduleDigest` принимает период 1..168 часов (дефолт 24h в 09:00 по `cfg.tz`) и `markAgendaItemFailed` помечает пункт как `failed` без авто-повтора (Task 4.10, Req 9).
-- `engine/agenda.ts:agendaItemDirection` / `gateAgendaByFlags` — двусторонняя повестка с гейтингом по `proactiveClients` / `proactiveBoss`. `AgendaItem.direction` (`client` | `boss`) расширяет существующее хранилище без миграции (старые записи трактуются как `client`).
-- `engine/digests.ts:schedulePromiseFollowUp` — идемпотентное планирование follow-up клиенту по обещанию; без `dueAtMs` ставит `now + 24h` (Req 9.1).
-- Wiring в `engine/runtime.ts`: при `proactiveBoss=true` стартует `scheduleDigest`, на тик отправляет дайджест через `tg.sendText(cfg.ownerId)`. Ошибка адаптера → пункт повестки идёт в `failed` без авто-повтора (Req 9.6). `tickAgenda` гейтит клиентские пункты по `proactiveClients`.
-- `engine/gate.ts` — чистая функция `evaluateGate` для ветвления входящих по `cfg.gateLevel` (`open` / `gated` / `whitelist`) с регистронезависимым матчингом whitelist по `chatId` и `@username`.
-- `storage/md.ts:subscribeConfig` — наблюдатель `config.json` через `fs.watch`, чтобы runtime подхватывал изменения `gateLevel` и `whitelist` без рестарта (≤5 секунд).
-- Wiring в `engine/runtime.ts:handleIncoming` для не-primary клиентов: `upsertOnIncoming` → `isBlocked` → `evaluateGate` с эмитом `ignored`/`info` для `block`/`force-escalate`.
-- `engine/after-hours.ts` — чистый роутер `evaluateAfterHours` по `cfg.afterHoursPolicy` (`silent` / `auto-reply` / `vip-only`) с одноразовым auto-reply на off-окно (поле `lastAutoReplyAt`) и хелпер `computeOffWindowStart` для определения границ непрерывного нерабочего окна (Task 4.9, Req 8).
-- Wiring в `engine/runtime.ts:handleIncoming` после gate `allow` для не-primary клиентов: вне рабочих часов решение `silent` → ignored, `auto-reply` → одно сообщение + persist `lastAutoReplyAt`, `auto-reply-skip` → info, `normal` → продолжение flow.
-- Hot-reload `cfg.afterHoursPolicy` через существующий `subscribeConfig` (Task 4.8).
+- **Manager-mode engine**:
+  - `engine/contacts.ts` — CRUD контактов с adjacency-only автопереходами тиров (Property 4 — blocked-monotonicity).
+  - `engine/gate.ts` — ветвление по `cfg.gateLevel` (`open` / `gated` / `whitelist`) с регистронезависимым матчингом whitelist.
+  - `engine/after-hours.ts` — роутер по `cfg.afterHoursPolicy` (`silent` / `auto-reply` / `vip-only`) с одноразовым auto-reply на off-окно.
+  - `engine/mandate.ts` — `MandateRuntime` с hot-reload `mandate.md` через `subscribeMandate` и LLM-классификатором `decideAction → answer-self / escalate / decline / ignore`.
+  - `engine/escalation.ts` — `createTicket` / `transitionTicket` (5 разрешённых переходов, Property 8) / `summarizeForBoss` (≤500 символов, fallback при таймауте) / `composeClientReplyFromBoss` через confidentiality-guard.
+  - `engine/escalation-timers.ts` — `tickEscalationTimeouts` для одноразового client-уведомления, 24-часового boss-timeout и 600-секундного client-confirm-timeout.
+  - `engine/boss-reply-parser.ts` — `parseBossReply` по трём identification modes (`reply_to`, `#T-N`, `@username`) с discriminated union (Property 3).
+  - `engine/confidentiality-guard.ts` — `assertNoLeak` ловит непрерывный посимвольный фрагмент >80 символов между `(client, summary)` и >20 cross-ticket (Property 2).
+  - `engine/work-hours.ts` — `isOutOfHours` объединение `busySchedule` со `[sleepFrom, sleepTo)` с учётом `cfg.tz`.
+  - `engine/digests.ts` — `composeDailyDigest`, `scheduleDigest`, `schedulePromiseFollowUp`. Двусторонняя `agenda.json` с полем `direction: "client" | "boss"`. Failed-пункты не повторяются.
+  - `engine/runtime.ts` — главный диспетчер `handleIncoming(m)` маршрутизирует по `m.fromId === cfg.ownerId` в `handleBossMessage` (boss-reply-parser → matched / conflict / ambiguous-username / etc) или в client-flow (`upsertOnIncoming` → `isBlocked` → `evaluateGate` → `evaluateAfterHours` → `behaviorTick` → `mandate.decideAction`).
+- **Manager-mode types & presets**: `Tier`, `Tone`, `PersonaStyle`, `GateLevel`, `AfterHoursPolicy`, `WhitelistEntry`, `ContactScore`, `ContactRecord`, `Ticket`, `TicketState`, `TicketTransition`, `TicketsFile`, `BossReplyParseResult`, `EscalationDecision` в `types.ts`. `presets/contact-tiers.ts` (6 значений с adjacency хелперами). `presets/manager-tone.ts` (3 тона + `resolveTone(tone, tier)` для `mixed-by-tier`). `presets/persona-style.ts` (3 стиля).
+- **Manager-mode storage**: `loadContact`/`saveContact`/`listContacts`/`deleteContact` через atomic write (Property 6 — round-trip). `loadTickets`/`saveTickets`/`nextTicketId` (Property 5). `loadMandate`/`saveMandate`/`subscribeMandate` через `fs.watch` для hot-reload. `subscribeConfig` для hot-reload `gateLevel` / `whitelist` / `afterHoursPolicy` / `tone` / `personaStyle` / `escalationTimeoutMin` / `proactiveClients` / `proactiveBoss` ≤5 секунд.
+- **Manager-mode prompt**: `engine/prompt.ts` собирает system prompt из `mandate.md`, `tone`-фрагмента, `persona-style`-фрагмента и контактной карточки `data/<slug>/contacts/<chat_id>.json` вместо `relationship.md`. Memory-palace индексируется по `chatId`. Анти-AI-правила сохранены. `typos`-пресет переключён на менее агрессивный `MANAGER_TYPO_DENSITY`.
+- **WebUI backend**:
+  - `POST /api/profiles` расширен валидацией всех manager-полей с rollback `data/<slug>/` при ошибке любого шага записи.
+  - `GET/PUT /api/mandate/:slug` — чтение и hot-reload `mandate.md`.
+  - `GET/PUT /api/whitelist/:slug` — управление whitelist с валидацией `chatId` (1..9999999999999) и `@username` (3-32, `[a-zA-Z0-9_]`).
+  - `GET /api/contacts/:slug` — `ContactRecord[]` с фильтром `tier` и сортировкой `lastMessageAt`. `PATCH /api/contacts/:slug/:chatId` для смены тира (`manualOverride=true`) и заметок (≤2000) под per-key мьютексом.
+  - `GET /api/inbox/:slug` — список тикетов с фильтром `state` и сортировкой `createdAt`. `GET /api/inbox/:slug/:ticketId` (детали с `llmDraftForBoss` для `waiting-boss`). `POST .../reply` (1..4096 символов через `composeClientReplyFromBoss`), `POST .../cancel` (`open`/`waiting-boss` → `closed`).
+- **WebUI frontend**:
+  - `/setup/manager` — визард создания профиля менеджера со всеми полями Req 1, inline-валидацией и атомарной отправкой через `POST /api/profiles`.
+  - `/contacts/:slug` — таблица контактов с inline-выбором тира (6 значений), редактированием заметок (Enter/blur, ≤2000), фильтром по тиру, сортировкой по `lastMessageAt`, polling раз в 5 секунд.
+  - `/inbox/:slug` — список тикетов с фильтром по состоянию, side-panel с резюме и формой ответа на `waiting-boss` (1..4096 символов, инлайн-валидация). Cancel закрывает тикет; `closed`/`answered` блокируют повторный ответ.
+- **CLI**: подкоманда `manager-agent server` с флагами `--config=<path>`, `--headless`, `--print-config`. Несуществующий `--profile=<slug>` → exit≠0 со списком доступных. Чистый хелпер `cli-args.ts` с `describeMissingProfile`.
+- **Migrations**: `0115-manager-mode` удаляет устаревшие поля и `relationship.md`/`conflict.json`/`boundaries.md`, выставляет дефолты новых полей, создаёт `mandate.md` с шаблоном, пустой `tickets.json`, директорию `contacts/`, лог-warning при отсутствии `ownerId`.
+- **Тестовая инфраструктура**: vitest + fast-check (322 теста), Property-based тесты 1-8 на 1000 итераций (consolidated в `src/__tests__/properties/`).
+
+### Changed
+
+- **Ребренд**: пакет переименован в `@thesashadev/manager-agent`, bin — `manager-agent`, env-префикс `GIRL_AGENT_*` → `MANAGER_AGENT_*`, дефолтный порт WebUI 3000 → 3100, data-path по платформам теперь `manager-agent` (Linux: `~/.local/share/manager-agent/data`, macOS: `~/Library/Application Support/manager-agent/data`, Windows: `%APPDATA%\manager-agent\data`). README/LICENSE/`package.json` содержат явную атрибуцию форка `TheSashaDev/girl-agent`.
+- **CLI-баннеры, server help, `install.sh`**: упоминания `girl-agent` заменены на `manager-agent`.
+
+### Removed
+
+- **Романтические ветки**: удалены `src/presets/stages.ts`, `src/engine/hormones.ts`, типы `StageId`/`StagePreset`/`RelationshipScope`, функции `isRomanticApproach`/`maybeBlockAfterBoundary`/`switchPrimaryAfterDumped`, ветка `dumped` в `handleIncoming`, все вызовы `findStage`/`computeHormones`/`hormonesMd`. Хелпер `findStage` переименован в deprecated `legacyStage` для обратной совместимости старых полей конфига до миграции.
+- **Communication presets**: удалены 5 пресетов (`normal`, `cute`, `alt`, `clingy`, `chatty`) и `findCommunicationPreset`. Поля `vibe` и `communication` в `ProfileConfig` оставлены как заглушки до полного удаления в следующих релизах.
+
+### Migration notes
+
+- Существующие профили `girl-agent` нужно обновить через `npx @thesashadev/manager-agent update` — миграция `0115-manager-mode` переведёт их на manager-схему. После миграции в `data/<slug>/mandate.md` будет шаблон, который владелец дописывает под свой бизнес.
+- Если у профиля не задан `ownerId`, миграция оставляет warning в логе — без `ownerId` эскалации не работают.
+- Spec: `.kiro/specs/manager-mode/{requirements,design,tasks}.md`.
 
 ## 0.4.4
 
