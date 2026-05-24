@@ -182,6 +182,10 @@ async function main(): Promise<void> {
   process.stdout.write(`     1) ${instance.urls.loopback}\n`);
   process.stdout.write(`     2) ${instance.urls.localhost}\n`);
   process.stdout.write(`     3) ${instance.urls.public}\n`);
+  if (isTermuxRuntime()) {
+    process.stdout.write(`\n  Termux: открой ссылку 1 или 2 в браузере телефона.\n`);
+    process.stdout.write(`  Если открываешь с ПК в той же Wi-Fi сети: girl-agent --host=0.0.0.0\n`);
+  }
   process.stdout.write(`\n  REST API:        ${instance.urls.loopback}/api/system/health\n`);
   process.stdout.write(`  WebSocket logs:  ws://127.0.0.1:${port}/ws/logs/<slug>\n`);
   process.stdout.write(`  Ctrl+C для остановки\n\n`);
@@ -357,8 +361,15 @@ async function tryOpenBrowser(url: string): Promise<void> {
   let cmd = "";
   if (platform === "darwin") cmd = `open "${url}"`;
   else if (platform === "win32") cmd = `start "" "${url}"`;
+  else if (isTermuxRuntime()) cmd = `command -v termux-open-url >/dev/null 2>&1 && termux-open-url "${url}" || true`;
   else cmd = `xdg-open "${url}" >/dev/null 2>&1 || true`;
   childExec(cmd, () => { /* ignore — браузер опционален */ });
+}
+
+function isTermuxRuntime(): boolean {
+  return process.platform === "android" ||
+    !!process.env.TERMUX_VERSION ||
+    (process.env.PREFIX?.includes("/data/data/com.termux/files/usr") ?? false);
 }
 
 process.on("unhandledRejection", (reason) => {
