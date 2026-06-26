@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.8
+
+Дата: 2026-06-26
+
+- Update author link in README.md
+
+
 ## 0.4.7
 
 Дата: 2026-05-24
