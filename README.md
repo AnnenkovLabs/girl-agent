@@ -7,7 +7,7 @@
 **ИИ-девушка в Telegram, которая ведёт себя как человек.**
 Со сном, расписанием, памятью, характером — и без «конечно, я понимаю».
 
-[Сайт](https://girl-agent.com) · [Документация](https://docs.girl-agent.com) · [Канал](https://t.me/GirlAgentAI) · [Сообщество](https://t.me/GirlAgentAI_chat) · [Автор: @voided\_net](https://t.me/voided_net)
+[Сайт](https://girl-agent.com) · [Документация](https://docs.girl-agent.com) · [Канал](https://t.me/GirlAgentAI) · [Сообщество](https://t.me/GirlAgentAI_chat) · [Автор: @wamux](https://t.me/wamux)
 
 [![License](https://img.shields.io/badge/license-source--available-blue)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org)
